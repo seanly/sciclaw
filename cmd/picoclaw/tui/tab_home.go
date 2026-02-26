@@ -892,6 +892,10 @@ func (m HomeModel) renderChSetupView() string {
 		if name == "Telegram" {
 			lines = append(lines, styleHint.Render("  For group chats: @BotFather → /mybots → Bot Settings → Group Privacy → Turn off"))
 			lines = append(lines, "")
+		} else {
+			lines = append(lines, styleHint.Render("  Enable MESSAGE CONTENT INTENT in Developer Portal → Bot"))
+			lines = append(lines, styleHint.Render("  Permissions: View Channels, Send/Read Messages, Embed Links, Attach Files"))
+			lines = append(lines, "")
 		}
 		lines = append(lines, fmt.Sprintf("  Press %s to save, %s to cancel",
 			styleKey.Render("Enter"), styleKey.Render("Esc")))
