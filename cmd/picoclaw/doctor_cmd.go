@@ -155,6 +155,10 @@ func runDoctor(opts doctorOptions) doctorReport {
 	}
 
 	if cfgErr == nil && cfg != nil {
+		for _, c := range checkConfigHealth(cfg, configPath, opts) {
+			add(c)
+		}
+
 		workspace := cfg.WorkspacePath()
 		workspacePath = workspace
 		if fileExists(workspace) {
@@ -1058,6 +1062,164 @@ func syncBaselineSkills(srcSkillsDir, dstSkillsDir string) error {
 		}
 	}
 	return nil
+}
+
+func checkConfigHealth(cfg *config.Config, configPath string, opts doctorOptions) []doctorCheck {
+	checks := make([]doctorCheck, 0, 4)
+	if cfg == nil {
+		return checks
+	}
+
+	before := detectConfigHealthIssues(cfg)
+	after := before
+
+	mentionFixed := 0
+	allowlistFixed := 0
+	unmappedFixed := false
+	changed := false
+	backupPath := ""
+	var saveErr error
+	var reloadErr error
+
+	if opts.Fix && before.hasAny() {
+		ensureBackup := func() error {
+			if backupPath != "" {
+				return nil
+			}
+			var err error
+			backupPath, err = backupFile(configPath)
+			return err
+		}
+
+		if len(before.discordMentionMismatch) > 0 {
+			mentionFixed = applyRoutingMentionRequired(cfg, before.discordMentionMismatch)
+			if mentionFixed > 0 {
+				changed = true
+			}
+		}
+
+		if before.unmappedBehaviorLegacy {
+			cfg.Routing.UnmappedBehavior = config.RoutingUnmappedBehaviorBlock
+			unmappedFixed = true
+			changed = true
+		}
+
+		if before.discordAllowlistEmpty && len(before.suggestedDiscordUsers) > 0 {
+			cfg.Channels.Discord.AllowFrom = config.FlexibleStringSlice(before.suggestedDiscordUsers)
+			allowlistFixed = len(before.suggestedDiscordUsers)
+			changed = true
+		}
+
+		if changed {
+			if err := ensureBackup(); err != nil {
+				saveErr = fmt.Errorf("backup config: %w", err)
+			} else if err := config.SaveConfig(configPath, cfg); err != nil {
+				saveErr = fmt.Errorf("save config: %w", err)
+			} else {
+				reloadErr = requestRoutingReloadAt(configPath)
+				after = detectConfigHealthIssues(cfg)
+			}
+		}
+	}
+
+	if opts.Fix {
+		switch {
+		case !before.hasAny():
+			checks = append(checks, doctorCheck{Name: "config.health.fix", Status: doctorSkip, Message: "no config health fixes needed"})
+		case saveErr != nil:
+			data := map[string]string{"error": saveErr.Error()}
+			if backupPath != "" {
+				data["backup"] = backupPath
+			}
+			checks = append(checks, doctorCheck{Name: "config.health.fix", Status: doctorErr, Message: "failed to apply config health fixes", Data: data})
+		case changed:
+			parts := make([]string, 0, 3)
+			if mentionFixed > 0 {
+				parts = append(parts, fmt.Sprintf("require_mention fixed on %d mapping(s)", mentionFixed))
+			}
+			if unmappedFixed {
+				parts = append(parts, "unmapped_behavior set to block")
+			}
+			if allowlistFixed > 0 {
+				parts = append(parts, fmt.Sprintf("discord.allow_from set (%d entries)", allowlistFixed))
+			}
+			status := doctorOK
+			data := map[string]string{}
+			if backupPath != "" {
+				data["backup"] = backupPath
+			}
+			if reloadErr != nil {
+				status = doctorWarn
+				data["reload_error"] = reloadErr.Error()
+			}
+			checks = append(checks, doctorCheck{Name: "config.health.fix", Status: status, Message: strings.Join(parts, "; "), Data: data})
+		default:
+			checks = append(checks, doctorCheck{Name: "config.health.fix", Status: doctorWarn, Message: "no safe automatic changes applied"})
+		}
+	}
+
+	mentionStatus := doctorOK
+	mentionMsg := "all routed Discord mappings require @mention"
+	if n := len(after.discordMentionMismatch); n > 0 {
+		mentionStatus = doctorWarn
+		mentionMsg = fmt.Sprintf("%d routed Discord mapping(s) reply without @mention", n)
+	}
+	mentionData := map[string]string{}
+	if mentionStatus == doctorWarn {
+		mentionData["hint"] = fmt.Sprintf("run: %s doctor --fix", invokedCLIName())
+	}
+	checks = append(checks, doctorCheck{Name: "config.health.routing.require_mention", Status: mentionStatus, Message: mentionMsg, Data: mentionDataOrNil(mentionData)})
+
+	unmappedStatus := doctorSkip
+	unmappedMsg := strings.TrimSpace(cfg.Routing.UnmappedBehavior)
+	if unmappedMsg == "" {
+		unmappedMsg = config.RoutingUnmappedBehaviorDefault
+	}
+	unmappedData := map[string]string{}
+	if cfg.Routing.Enabled && len(cfg.Routing.Mappings) > 0 {
+		if after.unmappedBehaviorLegacy {
+			unmappedStatus = doctorWarn
+			unmappedMsg = "default (unmapped rooms fall back to default workspace)"
+			unmappedData["hint"] = fmt.Sprintf("run: %s doctor --fix", invokedCLIName())
+		} else if strings.EqualFold(strings.TrimSpace(cfg.Routing.UnmappedBehavior), config.RoutingUnmappedBehaviorBlock) {
+			unmappedStatus = doctorOK
+			unmappedMsg = "block"
+		} else if strings.TrimSpace(cfg.Routing.UnmappedBehavior) == "" {
+			unmappedStatus = doctorWarn
+			unmappedMsg = "default (unmapped rooms fall back to default workspace)"
+			unmappedData["hint"] = fmt.Sprintf("run: %s doctor --fix", invokedCLIName())
+		} else {
+			unmappedStatus = doctorErr
+		}
+	}
+	checks = append(checks, doctorCheck{Name: "config.health.routing.unmapped_behavior", Status: unmappedStatus, Message: unmappedMsg, Data: mentionDataOrNil(unmappedData)})
+
+	allowStatus := doctorSkip
+	allowMsg := "discord disabled"
+	allowData := map[string]string{}
+	if cfg.Channels.Discord.Enabled {
+		if len(after.suggestedDiscordUsers) > 0 {
+			allowData["suggested"] = strings.Join(after.suggestedDiscordUsers, ",")
+		}
+		if after.discordAllowlistEmpty {
+			allowStatus = doctorWarn
+			allowMsg = "empty (Discord ingress allows any sender)"
+			allowData["hint"] = fmt.Sprintf("run: %s doctor --fix", invokedCLIName())
+		} else {
+			allowStatus = doctorOK
+			allowMsg = fmt.Sprintf("%d entries", len(cfg.Channels.Discord.AllowFrom))
+		}
+	}
+	checks = append(checks, doctorCheck{Name: "config.health.discord.allow_from", Status: allowStatus, Message: allowMsg, Data: mentionDataOrNil(allowData)})
+
+	return checks
+}
+
+func mentionDataOrNil(data map[string]string) map[string]string {
+	if len(data) == 0 {
+		return nil
+	}
+	return data
 }
 
 func checkRoutingDiagnostics(cfg *config.Config) []doctorCheck {

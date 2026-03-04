@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -155,6 +156,11 @@ func main() {
 	}
 
 	command := os.Args[1]
+	if shouldOfferConfigHealthRepair(command) {
+		if err := maybeOfferConfigHealthRepair(); err != nil {
+			fmt.Printf("Warning: config health check failed: %v\n", err)
+		}
+	}
 
 	switch command {
 	case "onboard":
@@ -246,6 +252,230 @@ func main() {
 		printHelp()
 		os.Exit(1)
 	}
+}
+
+func shouldOfferConfigHealthRepair(command string) bool {
+	switch strings.ToLower(strings.TrimSpace(command)) {
+	case "app", "tui", "gateway", "service", "status", "agent":
+		return true
+	default:
+		return false
+	}
+}
+
+type configHealthIssues struct {
+	discordMentionMismatch []int
+	unmappedBehaviorLegacy bool
+	discordAllowlistEmpty  bool
+	suggestedDiscordUsers  []string
+}
+
+func maybeOfferConfigHealthRepair() error {
+	if !isTerminal(os.Stdin) || !isTerminal(os.Stdout) {
+		return nil
+	}
+
+	configPath := getConfigPath()
+	cfg, err := config.LoadConfig(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	issues := detectConfigHealthIssues(cfg)
+	if !issues.hasAny() {
+		return nil
+	}
+
+	fmt.Println()
+	fmt.Println("Config health check found settings that can cause unexpected Discord replies.")
+	r := bufio.NewReader(os.Stdin)
+
+	changed := false
+	backupPath := ""
+	ensureBackup := func() error {
+		if backupPath != "" {
+			return nil
+		}
+		var err error
+		backupPath, err = backupFile(configPath)
+		if err != nil {
+			return fmt.Errorf("backup config: %w", err)
+		}
+		return nil
+	}
+
+	if len(issues.discordMentionMismatch) > 0 {
+		fmt.Printf("- %d routed Discord mapping(s) are set to reply without @mention.\n", len(issues.discordMentionMismatch))
+		if promptYesNo(r, "  Fix now by requiring @mention in those mappings?", true) {
+			if err := ensureBackup(); err != nil {
+				return err
+			}
+			if applyRoutingMentionRequired(cfg, issues.discordMentionMismatch) > 0 {
+				changed = true
+			}
+		}
+	}
+
+	if issues.unmappedBehaviorLegacy {
+		fmt.Println("- Unmapped behavior is set to default fallback (old installs often expected block).")
+		if promptYesNo(r, "  Set unmapped behavior to block now?", false) {
+			if err := ensureBackup(); err != nil {
+				return err
+			}
+			cfg.Routing.UnmappedBehavior = config.RoutingUnmappedBehaviorBlock
+			changed = true
+		}
+	}
+
+	if issues.discordAllowlistEmpty {
+		fmt.Println("- Discord channel allowlist is empty (channel ingress currently allows any sender).")
+		if len(issues.suggestedDiscordUsers) > 0 {
+			fmt.Printf("  Suggested allowlist from routing mappings: %s\n", strings.Join(issues.suggestedDiscordUsers, ", "))
+		}
+		if promptYesNo(r, "  Set Discord allowlist from routed mapping users now?", false) {
+			if err := ensureBackup(); err != nil {
+				return err
+			}
+			cfg.Channels.Discord.AllowFrom = config.FlexibleStringSlice(issues.suggestedDiscordUsers)
+			changed = true
+		}
+	}
+
+	if !changed {
+		fmt.Println()
+		return nil
+	}
+
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		return fmt.Errorf("save config: %w", err)
+	}
+	if err := requestRoutingReload(); err != nil {
+		logger.WarnCF("routing", "failed to trigger routing reload marker", map[string]any{"error": err.Error()})
+	}
+
+	fmt.Println("Applied selected config fixes.")
+	if backupPath != "" {
+		fmt.Printf("Backup saved to: %s\n", backupPath)
+	}
+	fmt.Println()
+	return nil
+}
+
+func (i configHealthIssues) hasAny() bool {
+	return len(i.discordMentionMismatch) > 0 || i.unmappedBehaviorLegacy || i.discordAllowlistEmpty
+}
+
+func detectConfigHealthIssues(cfg *config.Config) configHealthIssues {
+	issues := configHealthIssues{
+		discordMentionMismatch: routingMentionMismatchIndexes(cfg),
+	}
+	if cfg == nil {
+		return issues
+	}
+
+	hasRouting := cfg.Routing.Enabled && len(cfg.Routing.Mappings) > 0
+	if hasRouting && strings.TrimSpace(cfg.Routing.UnmappedBehavior) == config.RoutingUnmappedBehaviorDefault {
+		issues.unmappedBehaviorLegacy = true
+	}
+
+	hasDiscordRouting := false
+	for _, m := range cfg.Routing.Mappings {
+		if strings.EqualFold(strings.TrimSpace(m.Channel), "discord") {
+			hasDiscordRouting = true
+			break
+		}
+	}
+	if hasRouting && hasDiscordRouting && cfg.Channels.Discord.Enabled && len(cfg.Channels.Discord.AllowFrom) == 0 {
+		issues.discordAllowlistEmpty = true
+		issues.suggestedDiscordUsers = collectDiscordRoutingSenders(cfg)
+	}
+
+	return issues
+}
+
+func collectDiscordRoutingSenders(cfg *config.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	out := make([]string, 0)
+	for _, m := range cfg.Routing.Mappings {
+		if !strings.EqualFold(strings.TrimSpace(m.Channel), "discord") {
+			continue
+		}
+		for _, sender := range m.AllowedSenders {
+			v := strings.TrimSpace(sender)
+			if v == "" {
+				continue
+			}
+			if _, ok := seen[v]; ok {
+				continue
+			}
+			seen[v] = struct{}{}
+			out = append(out, v)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func routingMentionMismatchIndexes(cfg *config.Config) []int {
+	if cfg == nil {
+		return nil
+	}
+	out := make([]int, 0)
+	for i, m := range cfg.Routing.Mappings {
+		if strings.ToLower(strings.TrimSpace(m.Channel)) != "discord" {
+			continue
+		}
+		if m.RequireMention != nil && !*m.RequireMention {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+func applyRoutingMentionRequired(cfg *config.Config, indexes []int) int {
+	if cfg == nil || len(indexes) == 0 {
+		return 0
+	}
+	t := true
+	updated := 0
+	for _, idx := range indexes {
+		if idx < 0 || idx >= len(cfg.Routing.Mappings) {
+			continue
+		}
+		cfg.Routing.Mappings[idx].RequireMention = &t
+		updated++
+	}
+	return updated
+}
+
+func requestRoutingReload() error {
+	return requestRoutingReloadAt(getConfigPath())
+}
+
+func requestRoutingReloadAt(configPath string) error {
+	triggerPath := filepath.Join(filepath.Dir(configPath), "routing.reload")
+	if err := os.MkdirAll(filepath.Dir(triggerPath), 0o755); err != nil {
+		return err
+	}
+	payload := []byte(time.Now().UTC().Format(time.RFC3339Nano) + "\n")
+	return os.WriteFile(triggerPath, payload, 0o600)
+}
+
+func isTerminal(f *os.File) bool {
+	if f == nil {
+		return false
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 func printHelp() {
