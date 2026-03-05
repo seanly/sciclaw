@@ -656,7 +656,7 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 	al.sessions.AddMessage(opts.SessionKey, "user", opts.UserMessage)
 
 	// 4. Run LLM iteration loop
-	finalContent, iteration, err := al.runLLMIteration(ctx, messages, opts)
+	finalContent, iteration, usage, err := al.runLLMIteration(ctx, messages, opts)
 	if err != nil {
 		al.dispatchHook(ctx, hooks.EventOnError, hooks.Context{
 			Timestamp:    time.Now(),
@@ -725,14 +725,28 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 		})
 	}
 
-	// 9. Log response
+	// 9. Log response and token usage
+	turnMs := time.Since(turnStartedAt).Milliseconds()
+	turnMeta := usage.fields()
+	turnMeta["iterations"] = iteration
+	turnMeta["message_tool_sent"] = messageToolSent
+	turnMeta["turn_ms"] = turnMs
+	if usage.LLMCalls > 0 {
+		logFields := make(map[string]interface{}, len(turnMeta)+2)
+		for k, v := range turnMeta {
+			logFields[k] = v
+		}
+		logFields["turn_id"] = opts.TurnID
+		logFields["session_key"] = opts.SessionKey
+		logger.InfoCF("agent", "Turn token usage", logFields)
+	}
 	if strings.TrimSpace(finalContent) == "" {
 		logger.InfoCF("agent", "No final assistant text emitted",
 			map[string]interface{}{
 				"session_key":       opts.SessionKey,
 				"iterations":        iteration,
 				"message_tool_sent": messageToolSent,
-				"turn_ms":           time.Since(turnStartedAt).Milliseconds(),
+				"turn_ms":           turnMs,
 			})
 	} else {
 		responsePreview := utils.Truncate(finalContent, 120)
@@ -742,7 +756,7 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 				"iterations":        iteration,
 				"final_length":      len(finalContent),
 				"message_tool_sent": messageToolSent,
-				"turn_ms":           time.Since(turnStartedAt).Milliseconds(),
+				"turn_ms":           turnMs,
 			})
 	}
 	al.dispatchHook(ctx, hooks.EventAfterTurn, hooks.Context{
@@ -754,22 +768,55 @@ func (al *AgentLoop) runAgentLoop(ctx context.Context, opts processOptions) (str
 		Model:              al.model,
 		UserMessage:        sanitizeHookText(opts.UserMessage),
 		LLMResponseSummary: sanitizeHookText(finalContent),
-		Metadata: map[string]any{
-			"iterations":        iteration,
-			"message_tool_sent": messageToolSent,
-			"turn_ms":           time.Since(turnStartedAt).Milliseconds(),
-		},
+		Metadata:           turnMeta,
 	})
 
 	return finalContent, nil
 }
 
+// turnUsage accumulates token usage across all LLM calls within a single turn.
+type turnUsage struct {
+	PromptTokens     int // Total input tokens across all calls
+	CompletionTokens int // Total output tokens across all calls
+	LLMCalls         int // Number of LLM round-trips
+}
+
+func (u *turnUsage) add(usage *providers.UsageInfo) {
+	if usage == nil {
+		return
+	}
+	u.PromptTokens += usage.PromptTokens
+	u.CompletionTokens += usage.CompletionTokens
+	u.LLMCalls++
+}
+
+// fields returns token metrics as a map for logging and hook metadata.
+func (u turnUsage) fields() map[string]interface{} {
+	return map[string]interface{}{
+		"llm_calls":     u.LLMCalls,
+		"input_tokens":  u.PromptTokens,
+		"output_tokens": u.CompletionTokens,
+		"total_tokens":  u.PromptTokens + u.CompletionTokens,
+	}
+}
+
+// addUsageFields merges per-call token metrics into an existing log map.
+func addUsageFields(m map[string]interface{}, u *providers.UsageInfo) {
+	if u == nil {
+		return
+	}
+	m["input_tokens"] = u.PromptTokens
+	m["output_tokens"] = u.CompletionTokens
+	m["total_tokens"] = u.TotalTokens
+}
+
 // runLLMIteration executes the LLM call loop with tool handling.
-// Returns the final content, iteration count, and any error.
-func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.Message, opts processOptions) (string, int, error) {
+// Returns the final content, iteration count, accumulated token usage, and any error.
+func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.Message, opts processOptions) (string, int, turnUsage, error) {
 	iteration := 0
 	var finalContent string
 	var lastMessageToolContent string
+	var usage turnUsage
 
 	for {
 		if al.maxIterations > 0 && iteration >= al.maxIterations {
@@ -866,16 +913,18 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 					"error":     err.Error(),
 					"duration":  time.Since(llmCallStartedAt).String(),
 				})
-			return "", iteration, fmt.Errorf("LLM call failed: %w", err)
+			return "", iteration, usage, fmt.Errorf("LLM call failed: %w", err)
 		}
-		logger.InfoCF("agent", "LLM call complete",
-			map[string]interface{}{
-				"turn_id":          opts.TurnID,
-				"iteration":        iteration,
-				"duration":         time.Since(llmCallStartedAt).String(),
-				"response_chars":   len(response.Content),
-				"tool_calls_count": len(response.ToolCalls),
-			})
+		usage.add(response.Usage)
+		llmCompleteFields := map[string]interface{}{
+			"turn_id":          opts.TurnID,
+			"iteration":        iteration,
+			"duration":         time.Since(llmCallStartedAt).String(),
+			"response_chars":   len(response.Content),
+			"tool_calls_count": len(response.ToolCalls),
+		}
+		addUsageFields(llmCompleteFields, response.Usage)
+		logger.InfoCF("agent", "LLM call complete", llmCompleteFields)
 		al.dispatchHook(ctx, hooks.EventAfterLLM, hooks.Context{
 			Timestamp:          time.Now(),
 			TurnID:             opts.TurnID,
@@ -1083,7 +1132,7 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 		finalContent = lastMessageToolContent
 	}
 
-	return finalContent, iteration, nil
+	return finalContent, iteration, usage, nil
 }
 
 func (al *AgentLoop) maybeArchiveDiscordSession(sessionKey string) (bool, error) {
