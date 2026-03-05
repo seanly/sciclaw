@@ -439,6 +439,24 @@ func TestShellTool_RelativePathsNotBlockedByPathGuard(t *testing.T) {
 	}
 }
 
+func TestShellTool_UnprefixedRelativeSlashPathsNotBlockedByPathGuard(t *testing.T) {
+	tmpDir := t.TempDir()
+	tool := NewExecTool(tmpDir, false)
+	tool.SetRestrictToWorkspace(true)
+
+	testCases := []string{
+		"pandoc memory/in.md -o memory/out.docx",
+		"ls skills/pandoc-docx/",
+		"cat memory/MEMORY.md",
+	}
+
+	for _, cmd := range testCases {
+		if blocked := tool.guardCommand(cmd, tmpDir); blocked != "" {
+			t.Errorf("expected unprefixed relative slash path command to pass guard:\n  cmd: %s\n  blocked: %s", cmd, blocked)
+		}
+	}
+}
+
 func TestShellTool_BlocksPythonSubprocessWrapperForPubMed(t *testing.T) {
 	tool := NewExecTool("", false)
 	cmd := "python3 - <<'PY'\nimport subprocess\nsubprocess.check_output(['pubmed','search','schizophrenia','--json'], text=True)\nPY"

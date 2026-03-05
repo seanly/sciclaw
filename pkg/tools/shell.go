@@ -30,7 +30,10 @@ type ExecTool struct {
 }
 
 var (
-	shellPathPattern             = regexp.MustCompile(`[A-Za-z]:\\[^\\\"']+|/[^\s\"']+`)
+	// Match absolute filesystem paths only. The leading boundary avoids false
+	// positives for relative tokens like "memory/file.md" where "/" appears
+	// inside a relative path segment.
+	shellPathPattern             = regexp.MustCompile(`(?:^|[\s'"=:(])((?:[A-Za-z]:\\[^\\\"'\s]+)|(?:/[^\s\"']+))`)
 	shellURLPattern              = regexp.MustCompile("https?://[^\\s\"'`]+")
 	shellMutatingCommandPattern  = regexp.MustCompile(`(?i)(^|[;&|()\s])(touch|mkdir|rmdir|rm|mv|cp|install|chmod|chown|truncate|tee|sed\s+-i|perl\s+-i|pandoc)([;&|()\s]|$)`)
 	shellWriteRedirectPattern    = regexp.MustCompile(`(^|[^0-9])>>?`)
@@ -677,7 +680,7 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 		// Also strip relative path patterns like ./ and ../ which can cause
 		// false positives (e.g., './backups/*' would extract '/backups/*')
 		pathScanInput = stripRelativePathPrefixes(pathScanInput)
-		matches := shellPathPattern.FindAllString(pathScanInput, -1)
+		matches := shellPathPattern.FindAllStringSubmatch(pathScanInput, -1)
 		type guardRoot struct {
 			path     string
 			readOnly bool
@@ -693,7 +696,14 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 			allowedRoots = append(allowedRoots, guardRoot{path: wsRoot, readOnly: false})
 		}
 
-		for _, raw := range matches {
+		for _, match := range matches {
+			if len(match) < 2 {
+				continue
+			}
+			raw := strings.TrimSpace(match[1])
+			if raw == "" {
+				continue
+			}
 			p, err := filepath.Abs(raw)
 			if err != nil {
 				continue
