@@ -33,12 +33,12 @@ type ProviderInfo struct {
 
 // ResolveProvider returns the provider name that would handle the given model string.
 func ResolveProvider(model string, cfg *config.Config) string {
-	if cfg.EffectiveMode() == "phi" {
+	if cfg.EffectiveMode() == config.ModePhi {
 		backend := cfg.Agents.Defaults.LocalBackend
 		if backend != "" {
 			return backend
 		}
-		return "ollama"
+		return config.BackendOllama
 	}
 
 	lower := strings.ToLower(model)
@@ -214,7 +214,7 @@ func SetEffort(cfg *config.Config, configPath string, effort string) error {
 
 // PrintStatus displays the current model status.
 func PrintStatus(cfg *config.Config) {
-	if cfg.EffectiveMode() == "phi" {
+	if cfg.EffectiveMode() == config.ModePhi {
 		fmt.Printf("Mode:             PHI (local inference)\n")
 		fmt.Printf("Backend:          %s\n", cfg.Agents.Defaults.LocalBackend)
 		fmt.Printf("Model:            %s\n", cfg.Agents.Defaults.LocalModel)
@@ -411,7 +411,7 @@ func knownModelsForProvider(provider string) []string {
 		return []string{"glm-4.7"}
 	case "groq":
 		return []string{"groq/llama-3.3-70b"}
-	case "ollama":
+	case config.BackendOllama:
 		return []string{"qwen3.5:2b", "qwen3.5:4b", "qwen3.5:9b"}
 	default:
 		return nil

@@ -1701,29 +1701,18 @@ func modesCmd() {
 func modesStatus(cfg *config.Config) {
 	mode := cfg.EffectiveMode()
 	switch mode {
-	case "phi":
+	case config.ModePhi:
 		fmt.Printf("Mode:     PHI (local inference)\n")
 		fmt.Printf("Backend:  %s\n", cfg.Agents.Defaults.LocalBackend)
 		fmt.Printf("Model:    %s\n", cfg.Agents.Defaults.LocalModel)
 		if cfg.Agents.Defaults.LocalPreset != "" {
 			fmt.Printf("Preset:   %s\n", cfg.Agents.Defaults.LocalPreset)
 		}
-		hw := hardware.Detect()
-		fmt.Printf("Hardware: %s %s, %dGB RAM, GPU: %s\n", hw.OS, hw.Arch, hw.MemoryGB, hw.GPUVendor)
+		printHardwareInfo(hardware.Detect())
 		if cfg.Agents.Defaults.LocalBackend != "" {
-			status := phi.CheckBackend(cfg.Agents.Defaults.LocalBackend)
-			if status.Running {
-				fmt.Printf("Status:   running (%s)\n", status.Version)
-			} else if status.Installed {
-				fmt.Printf("Status:   installed but not running\n")
-			} else {
-				fmt.Printf("Status:   not installed\n")
-			}
-			if status.Error != "" {
-				fmt.Printf("Error:    %s\n", status.Error)
-			}
+			printBackendHealth(cfg.Agents.Defaults.LocalBackend)
 		}
-	case "vm":
+	case config.ModeVM:
 		fmt.Printf("Mode:     VM\n")
 	default:
 		fmt.Printf("Mode:     Cloud\n")
@@ -1736,39 +1725,35 @@ func modesSet(cfg *config.Config, mode string) {
 	configPath := getConfigPath()
 
 	switch strings.ToLower(mode) {
-	case "cloud":
+	case config.ModeCloud:
 		cfg.Agents.Defaults.Mode = ""
-		if err := config.SaveConfig(configPath, cfg); err != nil {
-			fmt.Printf("Error saving config: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("Switched to cloud mode. Model: %s\n", cfg.Agents.Defaults.Model)
-
-	case "phi", "local":
+	case config.ModePhi, "local":
 		if cfg.Agents.Defaults.LocalBackend == "" || cfg.Agents.Defaults.LocalModel == "" {
 			fmt.Println("PHI mode not configured yet. Running setup...")
 			modesPhiSetup(cfg)
 			return
 		}
-		cfg.Agents.Defaults.Mode = "phi"
-		if err := config.SaveConfig(configPath, cfg); err != nil {
-			fmt.Printf("Error saving config: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("Switched to PHI mode. Backend: %s, Model: %s\n",
-			cfg.Agents.Defaults.LocalBackend, cfg.Agents.Defaults.LocalModel)
-
-	case "vm":
-		cfg.Agents.Defaults.Mode = "vm"
-		if err := config.SaveConfig(configPath, cfg); err != nil {
-			fmt.Printf("Error saving config: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("Switched to VM mode.")
-
+		cfg.Agents.Defaults.Mode = config.ModePhi
+	case config.ModeVM:
+		cfg.Agents.Defaults.Mode = config.ModeVM
 	default:
 		fmt.Printf("Unknown mode: %s. Use: cloud, phi, or vm\n", mode)
 		os.Exit(1)
+	}
+
+	if err := config.SaveConfig(configPath, cfg); err != nil {
+		fmt.Printf("Error saving config: %v\n", err)
+		os.Exit(1)
+	}
+
+	switch cfg.EffectiveMode() {
+	case config.ModePhi:
+		fmt.Printf("Switched to PHI mode. Backend: %s, Model: %s\n",
+			cfg.Agents.Defaults.LocalBackend, cfg.Agents.Defaults.LocalModel)
+	case config.ModeVM:
+		fmt.Println("Switched to VM mode.")
+	default:
+		fmt.Printf("Switched to cloud mode. Model: %s\n", cfg.Agents.Defaults.Model)
 	}
 }
 
@@ -1778,13 +1763,7 @@ func modesPhiSetup(cfg *config.Config) {
 	// 1. Detect hardware
 	fmt.Println("Detecting hardware...")
 	hw := hardware.Detect()
-	fmt.Printf("  OS:     %s\n", hw.OS)
-	fmt.Printf("  Arch:   %s\n", hw.Arch)
-	fmt.Printf("  RAM:    %d GB\n", hw.MemoryGB)
-	fmt.Printf("  GPU:    %s\n", hw.GPUVendor)
-	if hw.VRAMGB > 0 {
-		fmt.Printf("  VRAM:   %d GB\n", hw.VRAMGB)
-	}
+	printHardwareInfo(hw)
 
 	// 2. Load catalog and match profile
 	cat, err := phi.LoadCatalog()
@@ -1817,14 +1796,14 @@ func modesPhiSetup(cfg *config.Config) {
 	status := phi.CheckBackend(backend)
 	if !status.Installed {
 		fmt.Printf("\n%s is not installed.\n", backend)
-		if backend == "ollama" {
+		if backend == config.BackendOllama {
 			fmt.Println("Install Ollama from: https://ollama.com")
 		}
 		os.Exit(1)
 	}
 	if !status.Running {
 		fmt.Printf("\n%s is installed but not running.\n", backend)
-		if backend == "ollama" {
+		if backend == config.BackendOllama {
 			switch hw.OS {
 			case "darwin":
 				fmt.Println("Open the Ollama app to start the server.")
@@ -1863,7 +1842,7 @@ func modesPhiSetup(cfg *config.Config) {
 	}
 
 	// 7. Persist config
-	cfg.Agents.Defaults.Mode = "phi"
+	cfg.Agents.Defaults.Mode = config.ModePhi
 	cfg.Agents.Defaults.LocalBackend = backend
 	cfg.Agents.Defaults.LocalModel = model.OllamaTag
 	cfg.Agents.Defaults.LocalPreset = preset
@@ -1880,8 +1859,9 @@ func modesPhiSetup(cfg *config.Config) {
 }
 
 func modesPhiStatus(cfg *config.Config) {
-	if cfg.EffectiveMode() != "phi" {
-		fmt.Println("Not in PHI mode. Current mode:", cfg.EffectiveMode())
+	mode := cfg.EffectiveMode()
+	if mode != config.ModePhi {
+		fmt.Println("Not in PHI mode. Current mode:", mode)
 		return
 	}
 
@@ -1901,13 +1881,27 @@ func modesPhiStatus(cfg *config.Config) {
 		fmt.Printf("Model ready: %v\n", ready)
 	}
 
-	hw := hardware.Detect()
-	fmt.Printf("\nHardware:\n")
-	fmt.Printf("  OS:   %s %s\n", hw.OS, hw.Arch)
-	fmt.Printf("  RAM:  %d GB\n", hw.MemoryGB)
-	fmt.Printf("  GPU:  %s\n", hw.GPUVendor)
+	printHardwareInfo(hardware.Detect())
+}
+
+func printHardwareInfo(hw hardware.Profile) {
+	fmt.Printf("Hardware: %s %s, %dGB RAM, GPU: %s\n", hw.OS, hw.Arch, hw.MemoryGB, hw.GPUVendor)
 	if hw.VRAMGB > 0 {
 		fmt.Printf("  VRAM: %d GB\n", hw.VRAMGB)
+	}
+}
+
+func printBackendHealth(backend string) {
+	status := phi.CheckBackend(backend)
+	if status.Running {
+		fmt.Printf("Status:   running (%s)\n", status.Version)
+	} else if status.Installed {
+		fmt.Printf("Status:   installed but not running\n")
+	} else {
+		fmt.Printf("Status:   not installed\n")
+	}
+	if status.Error != "" {
+		fmt.Printf("Error:    %s\n", status.Error)
 	}
 }
 

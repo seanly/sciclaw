@@ -261,11 +261,11 @@ func NewAgentLoop(cfg *config.Config, msgBus *bus.MessageBus, provider providers
 		maxIter = 0
 	}
 
-	model := resolveModel(cfg.Agents.Defaults.Model, provider)
-
-	// PHI mode: use local model tag instead of cloud model
-	if cfg.EffectiveMode() == "phi" && cfg.Agents.Defaults.LocalModel != "" {
+	var model string
+	if cfg.EffectiveMode() == config.ModePhi && cfg.Agents.Defaults.LocalModel != "" {
 		model = cfg.Agents.Defaults.LocalModel
+	} else {
+		model = resolveModel(cfg.Agents.Defaults.Model, provider)
 	}
 
 	return &AgentLoop{

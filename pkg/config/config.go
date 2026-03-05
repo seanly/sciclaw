@@ -79,6 +79,13 @@ type AgentDefaults struct {
 }
 
 const (
+	ModeCloud = "cloud"
+	ModePhi   = "phi"
+	ModeVM    = "vm"
+
+	BackendOllama = "ollama"
+	BackendMLX    = "mlx"
+
 	RoutingUnmappedBehaviorBlock   = "block"
 	RoutingUnmappedBehaviorDefault = "default"
 )
@@ -524,12 +531,12 @@ func (c *Config) EffectiveMode() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	switch strings.ToLower(strings.TrimSpace(c.Agents.Defaults.Mode)) {
-	case "phi", "local":
-		return "phi"
-	case "vm":
-		return "vm"
+	case ModePhi, "local":
+		return ModePhi
+	case ModeVM:
+		return ModeVM
 	default:
-		return "cloud"
+		return ModeCloud
 	}
 }
 

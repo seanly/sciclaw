@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/sipeed/picoclaw/pkg/config"
 	"github.com/sipeed/picoclaw/pkg/hardware"
 )
 
@@ -104,13 +105,9 @@ func profileMatches(m *ProfileMatch, hw hardware.Profile) bool {
 		return false
 	}
 
-	// CPU-only check
+	// CPU-only profiles reject any machine with a GPU (Apple Silicon
+	// is handled by the apple_silicon profile, not cpu_only).
 	if m.CPUOnly && hw.GPUVendor != "none" && hw.GPUVendor != "" {
-		// For Apple Silicon, treat as not CPU-only (it has GPU)
-		if hw.GPUVendor != "apple" {
-			return false
-		}
-		// Apple Silicon is handled by the apple silicon profile, not cpu_only
 		return false
 	}
 
@@ -166,5 +163,5 @@ func (c *Catalog) SelectBackend(profile *HardwareProfileSpec) string {
 	if len(profile.BackendOrder) > 0 {
 		return profile.BackendOrder[0]
 	}
-	return "ollama"
+	return config.BackendOllama
 }

@@ -19,6 +19,7 @@ import (
 
 	"github.com/sipeed/picoclaw/pkg/auth"
 	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/picoclaw/pkg/phi"
 )
 
 type HTTPProvider struct {
@@ -230,7 +231,7 @@ func hasStoredCredential(provider string) bool {
 
 func CreateProvider(cfg *config.Config) (LLMProvider, error) {
 	// PHI mode routes to local backend (Ollama/MLX)
-	if cfg.EffectiveMode() == "phi" {
+	if cfg.EffectiveMode() == config.ModePhi {
 		return createLocalProvider(cfg)
 	}
 
@@ -444,12 +445,10 @@ func createLocalProvider(cfg *config.Config) (LLMProvider, error) {
 		return nil, fmt.Errorf("PHI mode requires local_backend and local_model to be configured; run: sciclaw modes phi-setup")
 	}
 
-	switch backend {
-	case "ollama":
-		return NewHTTPProvider("", "http://localhost:11434/v1", ""), nil
-	case "mlx":
-		return NewHTTPProvider("", "http://localhost:8080/v1", ""), nil
-	default:
+	apiBase := phi.BackendAPIBase(backend)
+	if apiBase == "" {
 		return nil, fmt.Errorf("unsupported local backend: %s", backend)
 	}
+
+	return NewHTTPProvider("", apiBase, ""), nil
 }

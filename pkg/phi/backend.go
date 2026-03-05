@@ -8,23 +8,44 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/sipeed/picoclaw/pkg/config"
 )
+
+const (
+	OllamaDefaultURL = "http://localhost:11434"
+	MLXDefaultURL    = "http://localhost:8080"
+)
+
+// ollamaClient is shared across Ollama API calls to reuse connections.
+var ollamaClient = &http.Client{Timeout: 5 * time.Second}
 
 // BackendStatus reports the health of a local inference backend.
 type BackendStatus struct {
-	Installed  bool   `json:"installed"`
-	Running    bool   `json:"running"`
-	Version    string `json:"version,omitempty"`
-	ModelReady bool   `json:"model_ready"`
-	Error      string `json:"error,omitempty"`
+	Installed bool   `json:"installed"`
+	Running   bool   `json:"running"`
+	Version   string `json:"version,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+// BackendAPIBase returns the OpenAI-compatible API base URL for the given backend.
+func BackendAPIBase(backend string) string {
+	switch backend {
+	case config.BackendOllama:
+		return OllamaDefaultURL + "/v1"
+	case config.BackendMLX:
+		return MLXDefaultURL + "/v1"
+	default:
+		return ""
+	}
 }
 
 // CheckBackend probes the given backend and returns its status.
 func CheckBackend(backend string) BackendStatus {
 	switch backend {
-	case "ollama":
+	case config.BackendOllama:
 		return checkOllama()
-	case "mlx":
+	case config.BackendMLX:
 		return BackendStatus{Error: "MLX support coming soon"}
 	default:
 		return BackendStatus{Error: fmt.Sprintf("unknown backend: %s", backend)}
@@ -45,14 +66,11 @@ func checkOllama() BackendStatus {
 	status.Installed = true
 	status.Version = strings.TrimSpace(string(out))
 
-	// Check if ollama is running via API
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get("http://localhost:11434/api/tags")
-	if err != nil {
+	// Check if ollama is running by listing models
+	if _, err := OllamaListModels(); err != nil {
 		status.Error = "ollama is installed but not running"
 		return status
 	}
-	defer resp.Body.Close()
 	status.Running = true
 
 	return status
@@ -60,28 +78,14 @@ func checkOllama() BackendStatus {
 
 // CheckModelReady returns true if the specified model tag is already pulled in Ollama.
 func CheckModelReady(ollamaTag string) bool {
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get("http://localhost:11434/api/tags")
+	models, err := OllamaListModels()
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
 
-	var result struct {
-		Models []struct {
-			Name string `json:"name"`
-		} `json:"models"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return false
-	}
-
-	// Ollama may store tags with or without ":latest" suffix
-	normalizedTag := ollamaTag
-	for _, m := range result.Models {
-		name := m.Name
-		if name == normalizedTag || name == normalizedTag+":latest" ||
-			strings.TrimSuffix(name, ":latest") == strings.TrimSuffix(normalizedTag, ":latest") {
+	for _, name := range models {
+		if name == ollamaTag || name == ollamaTag+":latest" ||
+			strings.TrimSuffix(name, ":latest") == strings.TrimSuffix(ollamaTag, ":latest") {
 			return true
 		}
 	}
@@ -129,15 +133,14 @@ func WarmupModel(ctx context.Context, ollamaTag string) error {
 
 	body := fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hello"}],"max_tokens":16}`, ollamaTag)
 	req, err := http.NewRequestWithContext(warmupCtx, "POST",
-		"http://localhost:11434/v1/chat/completions",
+		OllamaDefaultURL+"/v1/chat/completions",
 		strings.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("creating warmup request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
 		return fmt.Errorf("warmup request failed: %w", err)
 	}
@@ -166,8 +169,7 @@ func WarmupModel(ctx context.Context, ollamaTag string) error {
 
 // OllamaListModels returns the list of locally available model tags.
 func OllamaListModels() ([]string, error) {
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get("http://localhost:11434/api/tags")
+	resp, err := ollamaClient.Get(OllamaDefaultURL + "/api/tags")
 	if err != nil {
 		return nil, fmt.Errorf("connecting to ollama: %w", err)
 	}
