@@ -65,8 +65,8 @@
         "min_memory_gb": 16
       },
       "backend_order": [
-        "mlx",
-        "ollama"
+        "ollama",
+        "mlx"
       ],
       "defaults": {
         "speed": "qwen3.5-2b",

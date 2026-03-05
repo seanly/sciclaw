@@ -159,6 +159,8 @@ func (c *Catalog) SelectModel(profile *HardwareProfileSpec, preset string) (*Mod
 }
 
 // SelectBackend returns the preferred backend for the given profile.
+// The catalog's backend_order determines priority; ollama is listed first
+// for all profiles until MLX support is implemented.
 func (c *Catalog) SelectBackend(profile *HardwareProfileSpec) string {
 	if len(profile.BackendOrder) > 0 {
 		return profile.BackendOrder[0]

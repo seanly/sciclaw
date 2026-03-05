@@ -131,8 +131,8 @@ func TestSelectBackend_AppleSilicon(t *testing.T) {
 		t.Fatal("no matching profile")
 	}
 	backend := cat.SelectBackend(profile)
-	if backend != "mlx" {
-		t.Errorf("SelectBackend = %q, want %q", backend, "mlx")
+	if backend != "ollama" {
+		t.Errorf("SelectBackend = %q, want %q (ollama preferred until MLX is implemented)", backend, "ollama")
 	}
 }
 
