@@ -29,7 +29,11 @@ type HTTPProvider struct {
 }
 
 func NewHTTPProvider(apiKey, apiBase, proxy string) *HTTPProvider {
-	client := &http.Client{Timeout: 30 * time.Second}
+	return NewHTTPProviderWithTimeout(apiKey, apiBase, proxy, 30*time.Second)
+}
+
+func NewHTTPProviderWithTimeout(apiKey, apiBase, proxy string, timeout time.Duration) *HTTPProvider {
+	client := &http.Client{Timeout: timeout}
 
 	if proxy != "" {
 		proxyURL, err := url.Parse(proxy)
@@ -450,5 +454,7 @@ func createLocalProvider(cfg *config.Config) (LLMProvider, error) {
 		return nil, fmt.Errorf("unsupported local backend: %s", backend)
 	}
 
-	return NewHTTPProvider("", apiBase, ""), nil
+	// Local backends can take significantly longer than cloud endpoints while
+	// loading model weights; avoid failing healthy local requests at 30s.
+	return NewHTTPProviderWithTimeout("", apiBase, "", 10*time.Minute), nil
 }

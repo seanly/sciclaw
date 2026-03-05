@@ -200,8 +200,14 @@ func TestPhiPullModelCmd_BuildsOllamaPull(t *testing.T) {
 	if !msg.ok {
 		t.Fatalf("expected success, got %#v", msg)
 	}
-	if len(execStub.shellCommands) == 0 || !strings.Contains(execStub.shellCommands[0], "ollama pull 'qwen3.5:4b'") {
+	if len(execStub.shellCommands) == 0 || !strings.Contains(execStub.shellCommands[0], "pull") {
 		t.Fatalf("unexpected pull command: %#v", execStub.shellCommands)
+	}
+	if !strings.Contains(execStub.shellCommands[0], "qwen3.5:4b") {
+		t.Fatalf("expected model name in pull command, got: %s", execStub.shellCommands[0])
+	}
+	if !strings.Contains(execStub.shellCommands[0], "OLLAMA_BIN") {
+		t.Fatalf("expected ollama path resolution script, got: %s", execStub.shellCommands[0])
 	}
 }
 
@@ -270,10 +276,10 @@ func TestPhiOllamaServiceCmd_StartAndStop(t *testing.T) {
 	if len(execStub.shellCommands) < 2 {
 		t.Fatalf("expected at least two service commands, got %#v", execStub.shellCommands)
 	}
-	if !strings.Contains(execStub.shellCommands[0], "services start ollama") {
+	if !strings.Contains(execStub.shellCommands[0], "OP=") || !strings.Contains(execStub.shellCommands[0], "start") {
 		t.Fatalf("expected start command, got: %s", execStub.shellCommands[0])
 	}
-	if !strings.Contains(execStub.shellCommands[1], "services stop ollama") {
+	if !strings.Contains(execStub.shellCommands[1], "OP=") || !strings.Contains(execStub.shellCommands[1], "stop") {
 		t.Fatalf("expected stop command, got: %s", execStub.shellCommands[1])
 	}
 }

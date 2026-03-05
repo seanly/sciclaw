@@ -3,8 +3,10 @@ package phi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -19,6 +21,13 @@ const (
 
 // ollamaClient is shared across Ollama API calls to reuse connections.
 var ollamaClient = &http.Client{Timeout: 5 * time.Second}
+
+var ollamaPathCandidates = []string{
+	"/usr/local/bin/ollama",
+	"/opt/homebrew/bin/ollama",
+	"/home/linuxbrew/.linuxbrew/bin/ollama",
+	"/home/linuxbrew/.linuxbrew/opt/ollama/bin/ollama",
+}
 
 // BackendStatus reports the health of a local inference backend.
 type BackendStatus struct {
@@ -54,11 +63,16 @@ func CheckBackend(backend string) BackendStatus {
 
 func checkOllama() BackendStatus {
 	status := BackendStatus{}
+	ollamaBin, err := resolveOllamaBinary()
+	if err != nil {
+		status.Error = "ollama is not installed. Install from https://ollama.com"
+		return status
+	}
 
 	// Check if ollama is installed
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "ollama", "--version").CombinedOutput()
+	out, err := exec.CommandContext(ctx, ollamaBin, "--version").CombinedOutput()
 	if err != nil {
 		status.Error = "ollama is not installed. Install from https://ollama.com"
 		return status
@@ -95,10 +109,15 @@ func CheckModelReady(ollamaTag string) bool {
 // PullModel pulls a model using ollama pull. It calls the progress callback
 // with status lines from ollama's output.
 func PullModel(ctx context.Context, ollamaTag string, progress func(string)) error {
+	ollamaBin, err := resolveOllamaBinary()
+	if err != nil {
+		return err
+	}
+
 	pullCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
-	cmd := exec.CommandContext(pullCtx, "ollama", "pull", ollamaTag)
+	cmd := exec.CommandContext(pullCtx, ollamaBin, "pull", ollamaTag)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("creating stdout pipe: %w", err)
@@ -189,4 +208,20 @@ func OllamaListModels() ([]string, error) {
 		models[i] = m.Name
 	}
 	return models, nil
+}
+
+func resolveOllamaBinary() (string, error) {
+	if p, err := exec.LookPath("ollama"); err == nil {
+		return p, nil
+	}
+	for _, candidate := range ollamaPathCandidates {
+		info, err := os.Stat(candidate)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if info.Mode()&0o111 != 0 {
+			return candidate, nil
+		}
+	}
+	return "", errors.New("ollama binary not found")
 }

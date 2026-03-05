@@ -557,7 +557,15 @@ func phiPullModelCmd(exec Executor, backend, model string) tea.Cmd {
 				ok:     false,
 			}
 		}
-		cmd := phiHomeEnv(exec) + " ollama pull " + shellEscape(model) + " 2>&1"
+		script := phiBrewLookupScript() + `
+` + phiOllamaLookupScript() + `
+if [ -z "$OLLAMA_BIN" ]; then
+  echo "Ollama binary not found. Run [i] Setup or install from https://ollama.com"
+  exit 1
+fi
+"$OLLAMA_BIN" pull ` + shellEscape(model) + `
+`
+		cmd := phiHomeEnv(exec) + " bash -lc " + shellEscape(script) + " 2>&1"
 		out, err := exec.ExecShell(20*time.Minute, cmd)
 		out = strings.TrimSpace(out)
 		if err != nil {
@@ -593,12 +601,38 @@ func phiOllamaServiceCmd(exec Executor, op string) tea.Cmd {
 			return phiActionMsg{action: "service-" + op, output: "unsupported service operation", ok: false}
 		}
 		script := phiBrewLookupScript() + `
-if [ -z "$BREW_BIN" ]; then
-  echo "Homebrew not found. Manage Ollama manually."
+set -e
+OP=` + shellEscape(op) + `
+MANAGED=0
+
+if command -v systemctl >/dev/null 2>&1; then
+  if systemctl list-unit-files 2>/dev/null | grep -q '^ollama\.service'; then
+    if [ "$(id -u)" -eq 0 ]; then
+      systemctl "$OP" ollama
+      MANAGED=1
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+      sudo -n systemctl "$OP" ollama
+      MANAGED=1
+    elif systemctl --user list-unit-files 2>/dev/null | grep -q '^ollama\.service'; then
+      systemctl --user "$OP" ollama
+      MANAGED=1
+    else
+      echo "Found systemd ollama.service, but current user cannot control it without sudo."
+    fi
+  fi
+fi
+
+if [ "$MANAGED" -eq 0 ] && [ -n "$BREW_BIN" ]; then
+  "$BREW_BIN" services "$OP" ollama
+  MANAGED=1
+fi
+
+if [ "$MANAGED" -eq 0 ]; then
+  echo "No managed Ollama service detected. Start it manually and press [r] refresh."
   exit 1
 fi
-"$BREW_BIN" services ` + op + ` ollama
-echo "Ollama service ` + op + ` requested."
+
+echo "Ollama service $OP requested."
 `
 		cmd := phiHomeEnv(exec) + " bash -lc " + shellEscape(script) + " 2>&1"
 		out, err := exec.ExecShell(2*time.Minute, cmd)
@@ -661,6 +695,8 @@ func phiBrewLookupScript() string {
 BREW_BIN=""
 if command -v brew >/dev/null 2>&1; then
   BREW_BIN="$(command -v brew)"
+elif [ -x /usr/local/bin/brew ]; then
+  BREW_BIN=/usr/local/bin/brew
 elif [ -x /opt/homebrew/bin/brew ]; then
   BREW_BIN=/opt/homebrew/bin/brew
 elif [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
@@ -669,30 +705,94 @@ fi
 `
 }
 
+func phiOllamaLookupScript() string {
+	return `
+OLLAMA_BIN=""
+if command -v ollama >/dev/null 2>&1; then
+  OLLAMA_BIN="$(command -v ollama)"
+elif [ -x /usr/local/bin/ollama ]; then
+  OLLAMA_BIN=/usr/local/bin/ollama
+elif [ -x /opt/homebrew/bin/ollama ]; then
+  OLLAMA_BIN=/opt/homebrew/bin/ollama
+elif [ -x /home/linuxbrew/.linuxbrew/bin/ollama ]; then
+  OLLAMA_BIN=/home/linuxbrew/.linuxbrew/bin/ollama
+elif [ -x /home/linuxbrew/.linuxbrew/opt/ollama/bin/ollama ]; then
+  OLLAMA_BIN=/home/linuxbrew/.linuxbrew/opt/ollama/bin/ollama
+elif [ -n "$BREW_BIN" ]; then
+  BREW_PREFIX="$("$BREW_BIN" --prefix 2>/dev/null || true)"
+  if [ -n "$BREW_PREFIX" ] && [ -x "$BREW_PREFIX/bin/ollama" ]; then
+    OLLAMA_BIN="$BREW_PREFIX/bin/ollama"
+  fi
+fi
+`
+}
+
 func phiOllamaInstallScript() string {
 	return `
 set -e
 ` + phiBrewLookupScript() + `
-if command -v ollama >/dev/null 2>&1; then
-  OLLAMA_BIN="$(command -v ollama)"
-  echo "ollama is already installed."
+` + phiOllamaLookupScript() + `
+if [ -n "$OLLAMA_BIN" ]; then
+  echo "ollama is already installed at $OLLAMA_BIN."
 else
-  if [ -z "$BREW_BIN" ]; then
-    echo "Homebrew not found. Install Ollama manually: https://ollama.com"
+  OS_NAME="$(uname -s)"
+  USED_INSTALLER=""
+
+  if [ "$OS_NAME" = "Linux" ] && (command -v nvidia-smi >/dev/null 2>&1 || [ -c /dev/nvidiactl ]); then
+    if [ "$(id -u)" -eq 0 ] || (command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1); then
+      if command -v curl >/dev/null 2>&1; then
+        echo "Installing Ollama via official Linux installer (best GPU support)..."
+        curl -fsSL https://ollama.com/install.sh | sh
+        USED_INSTALLER="official"
+      fi
+    fi
+  fi
+
+  if [ -z "$USED_INSTALLER" ] && [ -n "$BREW_BIN" ]; then
+    echo "Installing Ollama via Homebrew..."
+    "$BREW_BIN" install ollama
+    USED_INSTALLER="brew"
+  fi
+
+  if [ -z "$USED_INSTALLER" ] && command -v curl >/dev/null 2>&1; then
+    echo "Installing Ollama via official installer..."
+    curl -fsSL https://ollama.com/install.sh | sh
+    USED_INSTALLER="official"
+  fi
+
+  if [ -z "$USED_INSTALLER" ]; then
+    echo "Unable to auto-install Ollama on this system."
+    echo "Install manually from: https://ollama.com"
     exit 1
   fi
-  "$BREW_BIN" install ollama
-  OLLAMA_BIN="$("$BREW_BIN" --prefix)/bin/ollama"
+
+  ` + phiOllamaLookupScript() + `
 fi
 
-if [ -n "$BREW_BIN" ]; then
-  "$BREW_BIN" services start ollama || true
-fi
-
-if [ ! -x "$OLLAMA_BIN" ]; then
-  echo "Ollama install completed, but executable was not found in this shell."
+if [ -z "$OLLAMA_BIN" ]; then
+  echo "Ollama install completed, but executable was not found in expected paths."
   echo "Try a new terminal session, then rerun PHI setup."
   exit 1
+fi
+
+SERVICE_STARTED=0
+if command -v systemctl >/dev/null 2>&1; then
+  if systemctl list-unit-files 2>/dev/null | grep -q '^ollama\.service'; then
+    if [ "$(id -u)" -eq 0 ]; then
+      systemctl enable --now ollama || systemctl start ollama || true
+      SERVICE_STARTED=1
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+      sudo -n systemctl enable --now ollama || sudo -n systemctl start ollama || true
+      SERVICE_STARTED=1
+    elif systemctl --user list-unit-files 2>/dev/null | grep -q '^ollama\.service'; then
+      systemctl --user start ollama || true
+      SERVICE_STARTED=1
+    fi
+  fi
+fi
+
+if [ "$SERVICE_STARTED" -eq 0 ] && [ -n "$BREW_BIN" ]; then
+  "$BREW_BIN" services start ollama || true
 fi
 
 "$OLLAMA_BIN" --version || true
@@ -703,12 +803,7 @@ echo "Ollama install step complete."
 func phiOllamaProbeScript() string {
 	return `
 ` + phiBrewLookupScript() + `
-OLLAMA_BIN=""
-if command -v ollama >/dev/null 2>&1; then
-  OLLAMA_BIN="$(command -v ollama)"
-elif [ -n "$BREW_BIN" ] && [ -x "$("$BREW_BIN" --prefix)/bin/ollama" ]; then
-  OLLAMA_BIN="$("$BREW_BIN" --prefix)/bin/ollama"
-fi
+` + phiOllamaLookupScript() + `
 
 if [ -z "$OLLAMA_BIN" ]; then
   echo "installed:no"
@@ -724,7 +819,15 @@ fi
 if "$OLLAMA_BIN" ps >/dev/null 2>&1; then
   echo "running:yes"
 else
-  echo "running:no"
+  RUNNING="no"
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet ollama 2>/dev/null; then
+    RUNNING="yes"
+  elif command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet ollama 2>/dev/null; then
+    RUNNING="yes"
+  elif [ -n "$BREW_BIN" ] && "$BREW_BIN" services list 2>/dev/null | grep -E '^ollama[[:space:]]+started' >/dev/null; then
+    RUNNING="yes"
+  fi
+  echo "running:$RUNNING"
 fi
 `
 }
