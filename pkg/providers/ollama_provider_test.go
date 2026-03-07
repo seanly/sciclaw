@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -69,6 +70,9 @@ func TestOllamaProviderChat_RequestShapeAndParse(t *testing.T) {
 	if resp.FinishReason != "stop" {
 		t.Fatalf("finish_reason=%q want stop", resp.FinishReason)
 	}
+	if resp.Diagnostics == nil || resp.Diagnostics.ContentSource != "content" || resp.Diagnostics.ToolCallSource != "native" {
+		t.Fatalf("diagnostics=%+v", resp.Diagnostics)
+	}
 	if resp.Usage == nil || resp.Usage.PromptTokens != 11 || resp.Usage.CompletionTokens != 5 || resp.Usage.TotalTokens != 16 {
 		t.Fatalf("usage=%+v", resp.Usage)
 	}
@@ -122,7 +126,68 @@ func TestParseOllamaChatResponse_FallsBackToReasoning(t *testing.T) {
 	if resp.Content != "reasoning-only output" {
 		t.Fatalf("content=%q", resp.Content)
 	}
+	if resp.Diagnostics == nil || resp.Diagnostics.ContentSource != "reasoning" {
+		t.Fatalf("diagnostics=%+v", resp.Diagnostics)
+	}
 	if resp.Usage == nil || resp.Usage.TotalTokens != 10 {
 		t.Fatalf("usage=%+v", resp.Usage)
+	}
+}
+
+func TestParseOllamaChatResponse_RecoversToolCallsFromThinkingJSON(t *testing.T) {
+	body := []byte(`{
+		"message": {
+			"content": "",
+			"thinking": "I should call a tool.\n{\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"word_count\",\"arguments\":{\"text\":\"alpha beta gamma delta\"}}}]}"
+		},
+		"done_reason": "stop",
+		"prompt_eval_count": 9,
+		"eval_count": 4
+	}`)
+	resp, err := parseOllamaChatResponse(body)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if resp.FinishReason != "tool_calls" {
+		t.Fatalf("finish_reason=%q want tool_calls", resp.FinishReason)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("tool calls=%+v", resp.ToolCalls)
+	}
+	if resp.ToolCalls[0].Name != "word_count" {
+		t.Fatalf("tool name=%q", resp.ToolCalls[0].Name)
+	}
+	if got := resp.ToolCalls[0].Arguments["text"]; got != "alpha beta gamma delta" {
+		t.Fatalf("tool args=%+v", resp.ToolCalls[0].Arguments)
+	}
+	if resp.Diagnostics == nil || resp.Diagnostics.ToolCallSource != "thinking" || resp.Diagnostics.ContentSource != "thinking" {
+		t.Fatalf("diagnostics=%+v", resp.Diagnostics)
+	}
+	if strings.Contains(resp.Content, `"tool_calls"`) {
+		t.Fatalf("content still contains tool call payload: %q", resp.Content)
+	}
+}
+
+func TestParseOllamaChatResponse_RecoversStringifiedToolArguments(t *testing.T) {
+	body := []byte(`{
+		"message": {
+			"content": "{\"tool_calls\":[{\"function\":{\"name\":\"exec\",\"arguments\":\"{\\\"cmd\\\":\\\"pwd\\\"}\"}}]}"
+		},
+		"done_reason": "stop",
+		"prompt_eval_count": 2,
+		"eval_count": 1
+	}`)
+	resp, err := parseOllamaChatResponse(body)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("tool calls=%+v", resp.ToolCalls)
+	}
+	if got := resp.ToolCalls[0].Arguments["cmd"]; got != "pwd" {
+		t.Fatalf("tool args=%+v", resp.ToolCalls[0].Arguments)
+	}
+	if resp.Diagnostics == nil || resp.Diagnostics.ToolCallSource != "content" {
+		t.Fatalf("diagnostics=%+v", resp.Diagnostics)
 	}
 }

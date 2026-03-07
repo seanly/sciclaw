@@ -1692,9 +1692,11 @@ func modesCmd() {
 		modesPhiSetup(cfg)
 	case "phi-status":
 		modesPhiStatus(cfg)
+	case "phi-eval":
+		modesPhiEvalCmd(cfg, os.Args[3:])
 	default:
 		fmt.Printf("Unknown modes command: %s\n", os.Args[2])
-		fmt.Printf("Usage: %s modes [status|set|phi-setup|phi-status]\n", commandName)
+		fmt.Printf("Usage: %s modes [status|set|phi-setup|phi-status|phi-eval]\n", commandName)
 	}
 }
 

@@ -977,6 +977,14 @@ func (al *AgentLoop) runLLMIteration(ctx context.Context, messages []providers.M
 			"response_chars":   len(response.Content),
 			"tool_calls_count": len(response.ToolCalls),
 		}
+		if response.Diagnostics != nil {
+			if source := strings.TrimSpace(response.Diagnostics.ContentSource); source != "" {
+				llmCompleteFields["content_source"] = source
+			}
+			if source := strings.TrimSpace(response.Diagnostics.ToolCallSource); source != "" {
+				llmCompleteFields["tool_call_source"] = source
+			}
+		}
 		addUsageFields(llmCompleteFields, response.Usage)
 		logger.InfoCF("agent", "LLM call complete", llmCompleteFields)
 		al.dispatchHook(ctx, hooks.EventAfterLLM, hooks.Context{

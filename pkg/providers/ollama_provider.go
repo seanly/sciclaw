@@ -169,6 +169,7 @@ func parseOllamaChatResponse(body []byte) (*LLMResponse, error) {
 	}
 
 	toolCalls := make([]ToolCall, 0, len(raw.Message.ToolCalls))
+	toolCallSource := ""
 	for i, tc := range raw.Message.ToolCalls {
 		name := strings.TrimSpace(tc.Function.Name)
 		if name == "" {
@@ -186,24 +187,160 @@ func parseOllamaChatResponse(body []byte) (*LLMResponse, error) {
 			Arguments: args,
 		})
 	}
+	if len(toolCalls) > 0 {
+		toolCallSource = "native"
+	}
 
 	content := raw.Message.Content
-	if strings.TrimSpace(content) == "" {
-		if strings.TrimSpace(raw.Message.Reasoning) != "" {
-			content = raw.Message.Reasoning
-		} else if strings.TrimSpace(raw.Message.Thinking) != "" {
-			content = raw.Message.Thinking
+	contentSource := ""
+	switch {
+	case strings.TrimSpace(raw.Message.Content) != "":
+		contentSource = "content"
+	case strings.TrimSpace(raw.Message.Reasoning) != "":
+		content = raw.Message.Reasoning
+		contentSource = "reasoning"
+	case strings.TrimSpace(raw.Message.Thinking) != "":
+		content = raw.Message.Thinking
+		contentSource = "thinking"
+	}
+	if len(toolCalls) == 0 {
+		for _, candidate := range []struct {
+			source string
+			text   string
+		}{
+			{source: "content", text: raw.Message.Content},
+			{source: "reasoning", text: raw.Message.Reasoning},
+			{source: "thinking", text: raw.Message.Thinking},
+		} {
+			recovered := extractTextToolCalls(candidate.text)
+			if len(recovered) == 0 {
+				continue
+			}
+			toolCalls = recovered
+			toolCallSource = candidate.source
+			stripped := strings.TrimSpace(stripTextToolCalls(candidate.text))
+			if contentSource == "" || contentSource == candidate.source {
+				content = stripped
+				contentSource = candidate.source
+			}
+			break
 		}
+	}
+
+	finishReason := raw.DoneReason
+	if len(toolCalls) > 0 && toolCallSource != "" && toolCallSource != "native" && (strings.TrimSpace(finishReason) == "" || finishReason == "stop") {
+		finishReason = "tool_calls"
+	}
+
+	diagnostics := &ResponseDiagnostics{
+		ContentSource:  contentSource,
+		ToolCallSource: toolCallSource,
+	}
+	if diagnostics.ContentSource == "" && diagnostics.ToolCallSource == "" {
+		diagnostics = nil
 	}
 
 	return &LLMResponse{
 		Content:      content,
 		ToolCalls:    toolCalls,
-		FinishReason: raw.DoneReason,
+		FinishReason: finishReason,
 		Usage: &UsageInfo{
 			PromptTokens:     raw.PromptEvalCount,
 			CompletionTokens: raw.EvalCount,
 			TotalTokens:      raw.PromptEvalCount + raw.EvalCount,
 		},
+		Diagnostics: diagnostics,
 	}, nil
+}
+
+func extractTextToolCalls(text string) []ToolCall {
+	start, end, ok := toolCallsEnvelopeBounds(text)
+	if !ok {
+		return nil
+	}
+
+	var wrapper struct {
+		ToolCalls []struct {
+			ID       string `json:"id"`
+			Type     string `json:"type"`
+			Function struct {
+				Name      string          `json:"name"`
+				Arguments json.RawMessage `json:"arguments"`
+			} `json:"function"`
+		} `json:"tool_calls"`
+	}
+	if err := json.Unmarshal([]byte(text[start:end]), &wrapper); err != nil {
+		return nil
+	}
+
+	result := make([]ToolCall, 0, len(wrapper.ToolCalls))
+	for i, tc := range wrapper.ToolCalls {
+		name := strings.TrimSpace(tc.Function.Name)
+		if name == "" {
+			continue
+		}
+		args, argsString := decodeTextToolArguments(tc.Function.Arguments)
+		id := strings.TrimSpace(tc.ID)
+		if id == "" {
+			id = fmt.Sprintf("ollama-text-tool-%d", i+1)
+		}
+		result = append(result, ToolCall{
+			ID:        id,
+			Type:      "function",
+			Name:      name,
+			Arguments: args,
+			Function: &FunctionCall{
+				Name:      name,
+				Arguments: argsString,
+			},
+		})
+	}
+	return result
+}
+
+func decodeTextToolArguments(raw json.RawMessage) (map[string]interface{}, string) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return map[string]interface{}{}, "{}"
+	}
+
+	args := map[string]interface{}{}
+	if trimmed[0] == '"' {
+		var encoded string
+		if err := json.Unmarshal(trimmed, &encoded); err == nil {
+			if err := json.Unmarshal([]byte(encoded), &args); err == nil {
+				return args, encoded
+			}
+			return map[string]interface{}{"raw": encoded}, encoded
+		}
+	}
+
+	if err := json.Unmarshal(trimmed, &args); err == nil {
+		return args, string(trimmed)
+	}
+	return map[string]interface{}{"raw": string(trimmed)}, string(trimmed)
+}
+
+func stripTextToolCalls(text string) string {
+	start, end, ok := toolCallsEnvelopeBounds(text)
+	if !ok {
+		return text
+	}
+	return strings.TrimSpace(text[:start] + text[end:])
+}
+
+func toolCallsEnvelopeBounds(text string) (int, int, bool) {
+	keyPos := strings.Index(text, `"tool_calls"`)
+	if keyPos == -1 {
+		return 0, 0, false
+	}
+	start := strings.LastIndex(text[:keyPos], "{")
+	if start == -1 {
+		return 0, 0, false
+	}
+	end := findMatchingBrace(text, start)
+	if end == start {
+		return 0, 0, false
+	}
+	return start, end, true
 }

@@ -111,7 +111,7 @@ func (m *PhiModel) HandleData(msg phiDataMsg) {
 }
 
 func (m *PhiModel) HandleAction(msg phiActionMsg) {
-	if msg.action == "setup" || msg.action == "pull" || msg.action == "install" || msg.action == "service-start" || msg.action == "service-stop" {
+	if msg.action == "setup" || msg.action == "pull" || msg.action == "install" || msg.action == "service-start" || msg.action == "service-stop" || msg.action == "eval" {
 		m.opInFlight = false
 		m.opName = ""
 	}
@@ -139,6 +139,8 @@ func (m *PhiModel) HandleAction(msg phiActionMsg) {
 		label = "Ollama service started"
 	case "service-stop":
 		label = "Ollama service stopped"
+	case "eval":
+		label = "PHI local eval complete"
 	case "refresh":
 		label = "PHI status refreshed"
 	}
@@ -181,7 +183,7 @@ func (m PhiModel) Update(msg tea.KeyMsg, _ *VMSnapshot) (PhiModel, tea.Cmd) {
 		return m, cmd
 	}
 
-	if m.opInFlight && (key == "p" || key == "d" || key == "i" || key == "o" || key == "x") {
+	if m.opInFlight && (key == "p" || key == "d" || key == "e" || key == "i" || key == "o" || key == "x") {
 		op := m.opName
 		if strings.TrimSpace(op) == "" {
 			op = "operation"
@@ -242,6 +244,10 @@ func (m PhiModel) Update(msg tea.KeyMsg, _ *VMSnapshot) (PhiModel, tea.Cmd) {
 		m.opInFlight = true
 		m.opName = "Model pull"
 		return m, phiPullModelCmd(m.exec, backend, model)
+	case "e":
+		m.opInFlight = true
+		m.opName = "PHI local eval"
+		return m, phiEvalCmd(m.exec)
 	case "i":
 		m.opInFlight = true
 		m.opName = "Ollama install"
@@ -322,7 +328,8 @@ func (m PhiModel) View(_ *VMSnapshot, width int) string {
 		styleKey.Render("[b]"),
 		styleKey.Render("[d]"),
 	))
-	lines = append(lines, fmt.Sprintf("  %s Install Ollama   %s Start Ollama   %s Stop Ollama   %s Refresh",
+	lines = append(lines, fmt.Sprintf("  %s Eval local quality   %s Install Ollama   %s Start Ollama   %s Stop Ollama   %s Refresh",
+		styleKey.Render("[e]"),
 		styleKey.Render("[i]"),
 		styleKey.Render("[o]"),
 		styleKey.Render("[x]"),
@@ -543,6 +550,20 @@ func phiSetupCmd(exec Executor) tea.Cmd {
 			return phiActionMsg{action: "setup", output: out, ok: false}
 		}
 		return phiActionMsg{action: "setup", output: out, ok: true}
+	}
+}
+
+func phiEvalCmd(exec Executor) tea.Cmd {
+	return func() tea.Msg {
+		cmd := phiHomeEnv(exec) + " " + shellEscape(exec.BinaryPath()) + " modes phi-eval 2>&1"
+		out, err := exec.ExecShell(3*time.Minute, cmd)
+		if err != nil {
+			if strings.TrimSpace(out) == "" {
+				out = err.Error()
+			}
+			return phiActionMsg{action: "eval", output: out, ok: false}
+		}
+		return phiActionMsg{action: "eval", output: out, ok: true}
 	}
 }
 

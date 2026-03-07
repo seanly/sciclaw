@@ -121,6 +121,23 @@ Interactive setup flow:
 
 Show detailed backend health and model readiness, including whether Ollama is running, which model is loaded, and current resource usage.
 
+### `sciclaw modes phi-eval`
+
+Run a local-only quality check against the configured PHI backend/model. This exercises three things that matter for local use:
+
+1. plain text response
+2. strict JSON response
+3. tool-call round trip
+
+Use it after switching models, after an Ollama upgrade, or when a local room feels unreliable:
+
+```bash
+sciclaw modes phi-eval
+sciclaw modes phi-eval --json
+```
+
+In the app, the same check is available from the **PHI Mode** tab with **`e`**.
+
 ## Hardware Profiles
 
 The setup command matches your hardware to one of these profiles and selects a default model using the **balanced** preset:

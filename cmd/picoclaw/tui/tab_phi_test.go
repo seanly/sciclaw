@@ -284,6 +284,27 @@ func TestPhiOllamaServiceCmd_StartAndStop(t *testing.T) {
 	}
 }
 
+func TestPhiEvalCmd_BuildsEvalCommand(t *testing.T) {
+	execStub := &phiTestExec{
+		home:     "/Users/tester/My Home",
+		shellOut: "pass",
+	}
+	msg := phiEvalCmd(execStub)().(phiActionMsg)
+	if !msg.ok {
+		t.Fatalf("expected success, got %#v", msg)
+	}
+	if len(execStub.shellCommands) == 0 {
+		t.Fatal("expected eval shell command")
+	}
+	cmd := execStub.shellCommands[0]
+	if !strings.Contains(cmd, "HOME='/Users/tester/My Home'") {
+		t.Fatalf("expected escaped HOME in eval command, got: %s", cmd)
+	}
+	if !strings.Contains(cmd, "modes phi-eval") {
+		t.Fatalf("expected phi-eval command, got: %s", cmd)
+	}
+}
+
 func TestParsePhiOllamaProbeOutput(t *testing.T) {
 	msg := phiDataMsg{}
 	parsePhiOllamaProbeOutput("installed:yes\nrunning:no\nversion:ollama version is 0.11.2\n", &msg)
@@ -339,5 +360,12 @@ func TestPhiModel_UpdateStartStopInstallSetInFlight(t *testing.T) {
 	nextStop, cmdStop := m3.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}}, nil)
 	if cmdStop == nil || !nextStop.opInFlight || nextStop.opName != "Stop Ollama service" {
 		t.Fatalf("expected stop op in flight, got opInFlight=%v opName=%q", nextStop.opInFlight, nextStop.opName)
+	}
+
+	m4 := NewPhiModel(execStub)
+	m4.loaded = true
+	nextEval, cmdEval := m4.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}}, nil)
+	if cmdEval == nil || !nextEval.opInFlight || nextEval.opName != "PHI local eval" {
+		t.Fatalf("expected eval op in flight, got opInFlight=%v opName=%q", nextEval.opInFlight, nextEval.opName)
 	}
 }

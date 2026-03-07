@@ -16,10 +16,16 @@ type FunctionCall struct {
 }
 
 type LLMResponse struct {
-	Content      string     `json:"content"`
-	ToolCalls    []ToolCall `json:"tool_calls,omitempty"`
-	FinishReason string     `json:"finish_reason"`
-	Usage        *UsageInfo `json:"usage,omitempty"`
+	Content      string               `json:"content"`
+	ToolCalls    []ToolCall           `json:"tool_calls,omitempty"`
+	FinishReason string               `json:"finish_reason"`
+	Usage        *UsageInfo           `json:"usage,omitempty"`
+	Diagnostics  *ResponseDiagnostics `json:"diagnostics,omitempty"`
+}
+
+type ResponseDiagnostics struct {
+	ContentSource  string `json:"content_source,omitempty"`
+	ToolCallSource string `json:"tool_call_source,omitempty"`
 }
 
 type UsageInfo struct {
