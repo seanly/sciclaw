@@ -21,7 +21,8 @@ RELEASE_DEV_PRERELEASE?=true
 BUILD_TIME=$(shell date +%FT%T%z)
 GO_VERSION=$(shell $(GO) version | awk '{print $$3}')
 LDFLAGS=-trimpath -ldflags "-s -w -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME) -X main.goVersion=$(GO_VERSION)"
-RELEASE_SOURCE_ASSET_PREFIX?=$(PRIMARY_BINARY_NAME)
+# Keep the source asset outside the sciclaw-* wildcard used for binary uploads.
+RELEASE_SOURCE_ASSET_PREFIX?=source-$(PRIMARY_BINARY_NAME)
 
 # Go variables
 GO?=go
