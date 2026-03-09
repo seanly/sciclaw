@@ -150,6 +150,8 @@ The setup command matches your hardware to one of these profiles and selects a d
 | CPU-only 16GB+ | Any | None | 16GB+ RAM | qwen3.5:4b |
 | CPU-only <16GB | Any | None | 6-15GB RAM | qwen3.5:2b |
 
+CPU-only local mode is supported, but it should usually be treated as the slower fallback lane for lighter private work rather than the same interactive experience you get on Apple Silicon or GPU-backed machines.
+
 ## Presets
 
 Presets control the trade-off between speed and output quality:

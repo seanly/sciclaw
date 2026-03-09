@@ -43,7 +43,7 @@ func modesPhiEvalCmd(cfg *config.Config, args []string) {
 		os.Exit(1)
 	}
 
-	results, backend, model, err := runPhiEval(cfg, time.Duration(*timeoutSec)*time.Second)
+	results, backend, model, preset, err := runPhiEval(cfg, time.Duration(*timeoutSec)*time.Second)
 	if err != nil {
 		fmt.Printf("PHI eval failed: %v\n", err)
 		os.Exit(1)
@@ -53,6 +53,7 @@ func modesPhiEvalCmd(cfg *config.Config, args []string) {
 		payload := map[string]any{
 			"backend":      backend,
 			"model":        model,
+			"preset":       preset,
 			"evaluated_at": time.Now().UTC().Format(time.RFC3339),
 			"results":      results,
 		}
@@ -102,25 +103,26 @@ func modesPhiEvalCmd(cfg *config.Config, args []string) {
 	}
 }
 
-func runPhiEval(cfg *config.Config, timeout time.Duration) ([]phiEvalResult, string, string, error) {
+func runPhiEval(cfg *config.Config, timeout time.Duration) ([]phiEvalResult, string, string, string, error) {
 	backend := strings.TrimSpace(cfg.Agents.Defaults.LocalBackend)
 	model := strings.TrimSpace(cfg.Agents.Defaults.LocalModel)
+	preset := strings.TrimSpace(cfg.Agents.Defaults.LocalPreset)
 	if backend == "" || model == "" {
-		return nil, "", "", fmt.Errorf("local PHI runtime is not configured; run: %s modes phi-setup", invokedCLIName())
+		return nil, "", "", "", fmt.Errorf("local PHI runtime is not configured; run: %s modes phi-setup", invokedCLIName())
 	}
 	if backend == config.BackendMLX {
-		return nil, backend, model, fmt.Errorf("MLX local backend is not supported in this build yet; use Ollama")
+		return nil, backend, model, preset, fmt.Errorf("MLX local backend is not supported in this build yet; use Ollama")
 	}
 
 	status := phi.CheckBackend(backend)
 	if !status.Installed {
-		return nil, backend, model, fmt.Errorf("%s is not installed", backend)
+		return nil, backend, model, preset, fmt.Errorf("%s is not installed", backend)
 	}
 	if !status.Running {
-		return nil, backend, model, fmt.Errorf("%s is not running", backend)
+		return nil, backend, model, preset, fmt.Errorf("%s is not running", backend)
 	}
 	if backend == config.BackendOllama && !phi.CheckModelReady(model) {
-		return nil, backend, model, fmt.Errorf("local model %q is not ready", model)
+		return nil, backend, model, preset, fmt.Errorf("local model %q is not ready", model)
 	}
 
 	cfgCopy := *cfg
@@ -128,7 +130,7 @@ func runPhiEval(cfg *config.Config, timeout time.Duration) ([]phiEvalResult, str
 	cfgCopy.Agents.Defaults.Mode = config.ModePhi
 	client, err := providers.CreateProvider(&cfgCopy)
 	if err != nil {
-		return nil, backend, model, err
+		return nil, backend, model, preset, err
 	}
 
 	results := make([]phiEvalResult, 0, 4)
@@ -136,7 +138,7 @@ func runPhiEval(cfg *config.Config, timeout time.Duration) ([]phiEvalResult, str
 	results = append(results, runPhiJSONEval(client, model, timeout))
 	results = append(results, runPhiExtractEval(client, model, timeout))
 	results = append(results, runPhiToolEval(client, model, timeout))
-	return results, backend, model, nil
+	return results, backend, model, preset, nil
 }
 
 func runPhiTextEval(client phiEvalChatClient, model string, timeout time.Duration) phiEvalResult {

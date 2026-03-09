@@ -54,6 +54,7 @@ type phiEvalProbe struct {
 type phiEvalRecord struct {
 	Backend     string         `json:"backend,omitempty"`
 	Model       string         `json:"model,omitempty"`
+	Preset      string         `json:"preset,omitempty"`
 	EvaluatedAt string         `json:"evaluated_at,omitempty"`
 	Error       string         `json:"error,omitempty"`
 	Results     []phiEvalProbe `json:"results"`
@@ -141,9 +142,7 @@ func (m *PhiModel) HandleData(msg phiDataMsg) {
 	m.hardware = strings.TrimSpace(msg.hardware)
 	m.note = strings.TrimSpace(msg.note)
 	m.err = strings.TrimSpace(msg.err)
-	if msg.eval != nil {
-		m.eval = msg.eval
-	}
+	m.eval = msg.eval
 }
 
 func (m *PhiModel) HandleAction(msg phiActionMsg) {
@@ -156,6 +155,10 @@ func (m *PhiModel) HandleAction(msg phiActionMsg) {
 	if out != "" {
 		m.lastOut = shortenOutput(out, 800)
 	}
+	if msg.ok && (msg.action == "setup" || msg.action == "set-local") {
+		m.eval = nil
+		_ = clearPhiEvalRecord(m.exec)
+	}
 	if msg.action == "eval" {
 		var record phiEvalRecord
 		var ok bool
@@ -167,11 +170,24 @@ func (m *PhiModel) HandleAction(msg phiActionMsg) {
 				}
 				m.eval = summarizePhiEvalRecord(record)
 				_ = persistPhiEvalRecord(m.exec, record)
+			} else {
+				record = phiEvalRecord{
+					Backend:     strings.TrimSpace(m.localBackend),
+					Model:       strings.TrimSpace(m.localModel),
+					Preset:      strings.TrimSpace(m.localPreset),
+					EvaluatedAt: time.Now().UTC().Format(time.RFC3339),
+					Error:       "invalid eval output: " + shortenOutput(out, 240),
+				}
+				m.eval = summarizePhiEvalRecord(record)
+				_ = persistPhiEvalRecord(m.exec, record)
+				msg.ok = false
+				out = record.Error
 			}
 		} else {
 			record = phiEvalRecord{
 				Backend:     strings.TrimSpace(m.localBackend),
 				Model:       strings.TrimSpace(m.localModel),
+				Preset:      strings.TrimSpace(m.localPreset),
 				EvaluatedAt: time.Now().UTC().Format(time.RFC3339),
 				Error:       shortenOutput(out, 400),
 			}
@@ -390,6 +406,9 @@ func (m PhiModel) View(_ *VMSnapshot, width int) string {
 	if strings.TrimSpace(m.hardware) != "" {
 		lines = append(lines, fmt.Sprintf("  %s  %s", label.Render("Hardware:"), m.hardware))
 	}
+	if note := phiPerformanceExpectation(m.hardware, m.eval); strings.TrimSpace(note) != "" {
+		lines = append(lines, fmt.Sprintf("  %s  %s", label.Render("Performance:"), styleHint.Render(note)))
+	}
 	if strings.TrimSpace(m.note) != "" {
 		lines = append(lines, "")
 		lines = append(lines, "  "+styleHint.Render(m.note))
@@ -491,9 +510,23 @@ func fetchPhiData(exec Executor) tea.Cmd {
 		} else if !isConfigNotFoundError(err) {
 			msg.err = fmt.Sprintf("config read failed: %v", err)
 		}
+		if msg.localBackend == "" {
+			msg.localBackend = "ollama"
+		}
+		if msg.localPreset == "" {
+			msg.localPreset = "balanced"
+		}
+
 		if raw, err := exec.ReadFile(phiEvalStatePath(exec)); err == nil {
 			if record, ok := parsePhiEvalRecord(raw); ok {
-				msg.eval = summarizePhiEvalRecord(record)
+				summary := summarizePhiEvalRecord(record)
+				if summary != nil && !phiEvalMatchesCurrentRuntime(record, msg.localBackend, msg.localModel, msg.localPreset) {
+					summary.Label = "needs attention"
+					summary.Detail = "Saved benchmark is for a different local setup. Run [e] again."
+					summary.LastError = "saved eval does not match the current local backend/model/preset"
+					summary.ProbeStatus = "stale benchmark"
+				}
+				msg.eval = summary
 			}
 		}
 
@@ -517,13 +550,6 @@ func fetchPhiData(exec Executor) tea.Cmd {
 		probeOut, _ := exec.ExecShell(10*time.Second, probeCmd)
 		if strings.TrimSpace(probeOut) != "" {
 			parsePhiOllamaProbeOutput(probeOut, &msg)
-		}
-
-		if msg.localBackend == "" {
-			msg.localBackend = "ollama"
-		}
-		if msg.localPreset == "" {
-			msg.localPreset = "balanced"
 		}
 
 		return msg
@@ -658,7 +684,7 @@ func phiSetupCmd(exec Executor) tea.Cmd {
 func phiEvalCmd(exec Executor) tea.Cmd {
 	return func() tea.Msg {
 		cmd := phiHomeEnv(exec) + " " + shellEscape(exec.BinaryPath()) + " modes phi-eval --json 2>&1"
-		out, err := exec.ExecShell(3*time.Minute, cmd)
+		out, err := exec.ExecShell(11*time.Minute, cmd)
 		if err != nil {
 			if strings.TrimSpace(out) == "" {
 				out = err.Error()
@@ -746,10 +772,10 @@ func summarizePhiEvalRecord(record phiEvalRecord) *phiEvalSummary {
 	case !allPassed:
 		summary.Label = "needs attention"
 		summary.Detail = "One or more local probes failed."
-	case textMS > 15000 || toolMS > 8000:
+	case textMS > 15000 || extractMS > 8000 || toolMS > 8000:
 		summary.Label = "fallback only"
 		summary.Detail = "Local mode works, but this machine is too slow for normal interactive turns."
-	case textMS > 6000 || toolMS > 4000:
+	case textMS > 6000 || extractMS > 3000 || toolMS > 4000:
 		summary.Label = "usable, slower"
 		summary.Detail = "Local mode is working, but users should expect noticeably slower turns."
 	default:
@@ -798,6 +824,16 @@ func persistPhiEvalRecord(exec Executor, record phiEvalRecord) error {
 	return exec.WriteFile(phiEvalStatePath(exec), data, 0o600)
 }
 
+func clearPhiEvalRecord(exec Executor) error {
+	return exec.WriteFile(phiEvalStatePath(exec), []byte("{}\n"), 0o600)
+}
+
+func phiEvalMatchesCurrentRuntime(record phiEvalRecord, backend, model, preset string) bool {
+	return strings.EqualFold(strings.TrimSpace(record.Backend), strings.TrimSpace(backend)) &&
+		strings.TrimSpace(record.Model) == strings.TrimSpace(model) &&
+		strings.EqualFold(strings.TrimSpace(record.Preset), strings.TrimSpace(preset))
+}
+
 func formatPhiEvalTime(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -820,6 +856,33 @@ func renderPhiEvalLabel(label string) string {
 		return styleErr.Render(label)
 	default:
 		return styleValue.Render(label)
+	}
+}
+
+func phiHardwareLooksCPUOnly(hardware string) bool {
+	hardware = strings.ToLower(strings.TrimSpace(hardware))
+	if hardware == "" {
+		return false
+	}
+	return strings.Contains(hardware, "gpu: none")
+}
+
+func phiPerformanceExpectation(hardware string, eval *phiEvalSummary) string {
+	if !phiHardwareLooksCPUOnly(hardware) {
+		return ""
+	}
+	if eval == nil {
+		return "This looks like a CPU-only machine. Local mode still works, but it is usually slower than GPU-backed or Apple Silicon setups. Run [e] to measure it before heavy work."
+	}
+	switch strings.TrimSpace(strings.ToLower(eval.Label)) {
+	case "fallback only":
+		return "This CPU-only machine is best for shorter private tasks and backup local use. Longer tool-heavy turns will feel slow."
+	case "usable, slower":
+		return "This CPU-only machine can handle local work, but expect noticeably slower turns than GPU-backed or Apple Silicon local mode."
+	case "good interactive":
+		return "This CPU-only machine measured well for local mode, but large tool-heavy turns can still be slower than GPU-backed or Apple Silicon setups."
+	default:
+		return "This looks like a CPU-only machine. Expect slower local turns and use the eval result above to decide whether it is a good fit."
 	}
 }
 

@@ -22,11 +22,13 @@ type phiTestExec struct {
 	shellErr      error
 	shellMatchOut map[string]string
 	shellCommands []string
+	shellTimeouts []time.Duration
 }
 
 func (e *phiTestExec) Mode() Mode { return ModeLocal }
 
-func (e *phiTestExec) ExecShell(_ time.Duration, cmd string) (string, error) {
+func (e *phiTestExec) ExecShell(timeout time.Duration, cmd string) (string, error) {
+	e.shellTimeouts = append(e.shellTimeouts, timeout)
 	e.shellCommands = append(e.shellCommands, cmd)
 	for needle, out := range e.shellMatchOut {
 		if strings.Contains(cmd, needle) {
@@ -326,6 +328,9 @@ func TestPhiEvalCmd_BuildsEvalCommand(t *testing.T) {
 	if !strings.Contains(cmd, "modes phi-eval --json") {
 		t.Fatalf("expected phi-eval command, got: %s", cmd)
 	}
+	if len(execStub.shellTimeouts) == 0 || execStub.shellTimeouts[0] != 11*time.Minute {
+		t.Fatalf("expected 11 minute eval timeout, got %#v", execStub.shellTimeouts)
+	}
 }
 
 func TestParsePhiEvalSummary_GoodInteractive(t *testing.T) {
@@ -380,6 +385,23 @@ func TestParsePhiEvalSummary_FallbackOnly(t *testing.T) {
 	}
 }
 
+func TestParsePhiEvalSummary_ExtractLatencyAffectsLabel(t *testing.T) {
+	summary, ok := parsePhiEvalSummary(`{
+  "results": [
+    {"name":"text","passed":true,"duration_ms":3018},
+    {"name":"json","passed":true,"duration_ms":371},
+    {"name":"extract","passed":true,"duration_ms":4100},
+    {"name":"tool","passed":true,"duration_ms":1278}
+  ]
+}`)
+	if !ok || summary == nil {
+		t.Fatal("expected eval summary")
+	}
+	if summary.Label != "usable, slower" {
+		t.Fatalf("label=%q", summary.Label)
+	}
+}
+
 func TestParsePhiEvalSummary_IncompleteOutputNeedsAttention(t *testing.T) {
 	summary, ok := parsePhiEvalSummary(`{
   "results": [
@@ -414,6 +436,31 @@ func TestPhiModelHandleAction_EvalStoresSummary(t *testing.T) {
 	}
 }
 
+func TestPhiModelHandleAction_EvalParseFailureBecomesFailureState(t *testing.T) {
+	execStub := &phiTestExec{}
+	m := NewPhiModel(execStub)
+	m.localBackend = "ollama"
+	m.localModel = "qwen3.5:4b"
+	m.localPreset = "balanced"
+	m.HandleAction(phiActionMsg{
+		action: "eval",
+		ok:     true,
+		output: "not-json",
+	})
+	if m.eval == nil {
+		t.Fatal("expected failure summary")
+	}
+	if m.eval.Label != "needs attention" {
+		t.Fatalf("label=%q", m.eval.Label)
+	}
+	if !strings.Contains(strings.ToLower(m.flashMsg), "failed") {
+		t.Fatalf("expected failure flash, got %q", m.flashMsg)
+	}
+	if got := execStub.writtenFiles[phiEvalStatePath(execStub)]; !strings.Contains(got, "invalid eval output") {
+		t.Fatalf("expected persisted invalid-output failure, got %q", got)
+	}
+}
+
 func TestPhiModelHandleAction_EvalFailurePersistsFailureSummary(t *testing.T) {
 	execStub := &phiTestExec{}
 	m := NewPhiModel(execStub)
@@ -442,7 +489,7 @@ func TestFetchPhiData_LoadsPersistedEvalSummary(t *testing.T) {
 	execStub := &phiTestExec{
 		configRaw: `{"agents":{"defaults":{"mode":"phi","local_backend":"ollama","local_model":"qwen3.5:9b","local_preset":"quality"}}}`,
 		readFiles: map[string]string{
-			phiEvalStatePath(&phiTestExec{}): `{"backend":"ollama","model":"qwen3.5:9b","evaluated_at":"2026-03-09T15:04:05Z","results":[{"name":"text","passed":true,"duration_ms":3018},{"name":"json","passed":true,"duration_ms":371},{"name":"extract","passed":true,"duration_ms":622},{"name":"tool","passed":true,"duration_ms":1278}]}`,
+			phiEvalStatePath(&phiTestExec{}): `{"backend":"ollama","model":"qwen3.5:9b","preset":"quality","evaluated_at":"2026-03-09T15:04:05Z","results":[{"name":"text","passed":true,"duration_ms":3018},{"name":"json","passed":true,"duration_ms":371},{"name":"extract","passed":true,"duration_ms":622},{"name":"tool","passed":true,"duration_ms":1278}]}`,
 		},
 	}
 	msg := fetchPhiData(execStub)().(phiDataMsg)
@@ -454,6 +501,86 @@ func TestFetchPhiData_LoadsPersistedEvalSummary(t *testing.T) {
 	}
 	if msg.eval.Label != "good interactive" {
 		t.Fatalf("label=%q", msg.eval.Label)
+	}
+}
+
+func TestFetchPhiData_StalePersistedEvalNeedsAttention(t *testing.T) {
+	execStub := &phiTestExec{
+		configRaw: `{"agents":{"defaults":{"mode":"phi","local_backend":"ollama","local_model":"qwen3.5:9b","local_preset":"quality"}}}`,
+		readFiles: map[string]string{
+			phiEvalStatePath(&phiTestExec{}): `{"backend":"ollama","model":"qwen3.5:4b","preset":"balanced","evaluated_at":"2026-03-09T15:04:05Z","results":[{"name":"text","passed":true,"duration_ms":3018},{"name":"json","passed":true,"duration_ms":371},{"name":"extract","passed":true,"duration_ms":622},{"name":"tool","passed":true,"duration_ms":1278}]}`,
+		},
+	}
+	msg := fetchPhiData(execStub)().(phiDataMsg)
+	if msg.eval == nil {
+		t.Fatal("expected cached eval summary")
+	}
+	if msg.eval.Label != "needs attention" {
+		t.Fatalf("label=%q", msg.eval.Label)
+	}
+	if !strings.Contains(strings.ToLower(msg.eval.Detail), "different local setup") {
+		t.Fatalf("detail=%q", msg.eval.Detail)
+	}
+}
+
+func TestFetchPhiData_DefaultPresetDoesNotMarkMatchingEvalStale(t *testing.T) {
+	execStub := &phiTestExec{
+		configRaw: `{"agents":{"defaults":{"mode":"phi","local_model":"qwen3.5:4b"}}}`,
+		readFiles: map[string]string{
+			phiEvalStatePath(&phiTestExec{}): `{"backend":"ollama","model":"qwen3.5:4b","preset":"balanced","evaluated_at":"2026-03-09T15:04:05Z","results":[{"name":"text","passed":true,"duration_ms":3018},{"name":"json","passed":true,"duration_ms":371},{"name":"extract","passed":true,"duration_ms":622},{"name":"tool","passed":true,"duration_ms":1278}]}`,
+		},
+	}
+	msg := fetchPhiData(execStub)().(phiDataMsg)
+	if msg.eval == nil {
+		t.Fatal("expected cached eval summary")
+	}
+	if msg.eval.Label == "needs attention" && strings.Contains(strings.ToLower(msg.eval.ProbeStatus), "stale") {
+		t.Fatalf("expected matching defaulted runtime, got stale summary: %+v", msg.eval)
+	}
+}
+
+func TestHandleData_ClearsEvalWhenNoCachedSummaryPresent(t *testing.T) {
+	m := NewPhiModel(&phiTestExec{})
+	m.eval = &phiEvalSummary{Label: "good interactive"}
+	m.HandleData(phiDataMsg{})
+	if m.eval != nil {
+		t.Fatalf("expected eval to be cleared, got %+v", m.eval)
+	}
+}
+
+func TestPhiModelHandleAction_SetLocalClearsCachedEval(t *testing.T) {
+	execStub := &phiTestExec{}
+	m := NewPhiModel(execStub)
+	m.eval = &phiEvalSummary{Label: "good interactive"}
+	m.HandleAction(phiActionMsg{action: "set-local", ok: true, output: "updated"})
+	if m.eval != nil {
+		t.Fatalf("expected eval cleared, got %+v", m.eval)
+	}
+	if got := execStub.writtenFiles[phiEvalStatePath(execStub)]; strings.TrimSpace(got) != "{}" {
+		t.Fatalf("expected cleared eval cache, got %q", got)
+	}
+}
+
+func TestPhiModelHandleAction_SetLocalFailureKeepsCachedEval(t *testing.T) {
+	execStub := &phiTestExec{}
+	m := NewPhiModel(execStub)
+	m.eval = &phiEvalSummary{Label: "good interactive"}
+	m.HandleAction(phiActionMsg{action: "set-local", ok: false, output: "save failed"})
+	if m.eval == nil || m.eval.Label != "good interactive" {
+		t.Fatalf("expected eval to remain, got %+v", m.eval)
+	}
+	if _, ok := execStub.writtenFiles[phiEvalStatePath(execStub)]; ok {
+		t.Fatalf("expected eval cache to remain untouched on failure")
+	}
+}
+
+func TestPhiPerformanceExpectation_CPUOnlyFallbackMessaging(t *testing.T) {
+	note := phiPerformanceExpectation("linux amd64, 16GB RAM, GPU: none", &phiEvalSummary{Label: "fallback only"})
+	if !strings.Contains(strings.ToLower(note), "cpu-only") {
+		t.Fatalf("expected cpu-only wording, got %q", note)
+	}
+	if !strings.Contains(strings.ToLower(note), "shorter private tasks") {
+		t.Fatalf("expected fallback-lane guidance, got %q", note)
 	}
 }
 
@@ -537,5 +664,45 @@ func TestPhiModel_UpdateBackendKeyWarnsWhenAlreadyOnOllama(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(next.flashMsg), "ollama is the supported local backend") {
 		t.Fatalf("unexpected flash message: %q", next.flashMsg)
+	}
+}
+
+func TestPhiPerformanceExpectation_CPUOnlyWithoutEval(t *testing.T) {
+	note := phiPerformanceExpectation("linux amd64, 16GB RAM, GPU: none", nil)
+	if !strings.Contains(strings.ToLower(note), "cpu-only machine") {
+		t.Fatalf("note=%q", note)
+	}
+	if !strings.Contains(note, "Run [e]") {
+		t.Fatalf("note=%q", note)
+	}
+}
+
+func TestPhiPerformanceExpectation_CPUOnlyFallbackOnly(t *testing.T) {
+	note := phiPerformanceExpectation("linux amd64, 16GB RAM, GPU: none", &phiEvalSummary{Label: "fallback only"})
+	if !strings.Contains(strings.ToLower(note), "shorter private tasks") {
+		t.Fatalf("note=%q", note)
+	}
+	if !strings.Contains(strings.ToLower(note), "slow") {
+		t.Fatalf("note=%q", note)
+	}
+}
+
+func TestPhiModelView_ShowsCPUOnlyPerformanceLine(t *testing.T) {
+	m := NewPhiModel(&phiTestExec{})
+	m.loaded = true
+	m.localBackend = "ollama"
+	m.localModel = "qwen3.5:4b"
+	m.localPreset = "balanced"
+	m.backendInstall = "yes"
+	m.backendRunning = "yes"
+	m.modelReady = "yes"
+	m.hardware = "linux amd64, 16GB RAM, GPU: none"
+
+	view := m.View(nil, 100)
+	if !strings.Contains(view, "Performance:") {
+		t.Fatalf("expected performance line:\n%s", view)
+	}
+	if !strings.Contains(strings.ToLower(view), "cpu-only machine") {
+		t.Fatalf("expected cpu-only guidance:\n%s", view)
 	}
 }
