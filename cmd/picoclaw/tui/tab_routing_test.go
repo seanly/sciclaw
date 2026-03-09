@@ -336,6 +336,27 @@ func TestRoutingListRows_ShowLabelChannelAndTruncatedChatID(t *testing.T) {
 	if !strings.Contains(view, truncateMiddle(longChatID, 16)) {
 		t.Fatalf("list row missing truncated chat id: %q", view)
 	}
+	if !strings.Contains(view, "App default AI") {
+		t.Fatalf("list row missing runtime label: %q", view)
+	}
+}
+
+func TestRoutingListRows_ShowLocalRuntimeBadge(t *testing.T) {
+	execStub := &routingTestExec{home: "/Users/tester"}
+	m := NewRoutingModel(execStub)
+	m.mappings = []routingRow{
+		{Channel: "discord", ChatID: "123", Workspace: "/tmp/project-a", Label: "project-a", Mode: "phi", LocalModel: "qwen3.5:4b"},
+	}
+	m.selectedRow = 0
+	m.rebuildListContent()
+
+	view := stripANSIForRoutingTest(m.listVP.View())
+	if !strings.Contains(view, "Local AI") {
+		t.Fatalf("list row missing local runtime badge: %q", view)
+	}
+	if !strings.Contains(view, "qwen3.5:4b") {
+		t.Fatalf("list row missing local model hint: %q", view)
+	}
 }
 
 func TestRoutingListScrollSync_KeepsSelectionVisible(t *testing.T) {
@@ -503,6 +524,70 @@ func TestRoutingView_SeparatesPanelTitlesAndKeybindingsIntoOwnLines(t *testing.T
 	}
 	if !strings.Contains(view, "\n  Detail \n") {
 		t.Fatalf("expected Detail title block, got:\n%s", view)
+	}
+}
+
+func TestRoutingDetailContent_ShowsPlainEnglishRuntimeSummary(t *testing.T) {
+	execStub := &routingTestExec{home: "/Users/tester"}
+	m := NewRoutingModel(execStub)
+	m.mappings = []routingRow{
+		{
+			Channel:        "discord",
+			ChatID:         "123",
+			Workspace:      "/tmp/project-a",
+			AllowedSenders: "111",
+			Label:          "project-a",
+			Mode:           "phi",
+			LocalBackend:   "ollama",
+			LocalModel:     "qwen3.5:4b",
+			LocalPreset:    "balanced",
+		},
+	}
+	m.selectedRow = 0
+	m.detailVP.Width = 100
+	m.detailVP.Height = 20
+	m.rebuildDetailContent()
+
+	view := stripANSIForRoutingTest(m.detailVP.View())
+	for _, want := range []string{
+		"Room AI:",
+		"Local AI on this machine",
+		"What this means:",
+		"This room always uses the local PHI runtime on this machine.",
+		"Local setup:",
+		"ollama",
+		"qwen3.5:4b",
+		"Decide whether this room uses cloud, local, VM, or the app default",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("detail view missing %q:\n%s", want, view)
+		}
+	}
+}
+
+func TestRoutingDetailContent_DefaultModeExplainsGlobalFallback(t *testing.T) {
+	execStub := &routingTestExec{home: "/Users/tester"}
+	m := NewRoutingModel(execStub)
+	m.mappings = []routingRow{
+		{
+			Channel:        "discord",
+			ChatID:         "123",
+			Workspace:      "/tmp/project-a",
+			AllowedSenders: "111",
+			Label:          "project-a",
+		},
+	}
+	m.selectedRow = 0
+	m.detailVP.Width = 100
+	m.detailVP.Height = 20
+	m.rebuildDetailContent()
+
+	view := stripANSIForRoutingTest(m.detailVP.View())
+	if !strings.Contains(view, "Follow the app-wide AI setting") {
+		t.Fatalf("detail view missing default runtime title:\n%s", view)
+	}
+	if !strings.Contains(view, "This room follows the app-wide AI setting") {
+		t.Fatalf("detail view missing default runtime explanation:\n%s", view)
 	}
 }
 

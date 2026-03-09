@@ -404,7 +404,7 @@ func (m *RoutingModel) rebuildListContent() {
 			label = styleBold.Render(label)
 		}
 
-		meta := fmt.Sprintf("%s \u2022 %s", r.Channel, truncateMiddle(r.ChatID, 16))
+		meta := fmt.Sprintf("%s \u2022 %s \u2022 %s", routingRuntimeListLabel(r), r.Channel, truncateMiddle(r.ChatID, 16))
 		line := fmt.Sprintf("  %s%-*s %s", indicator, labelW, label, styleDim.Render(meta))
 		if i == m.selectedRow {
 			lineW := m.listVP.Width - 2
@@ -471,6 +471,77 @@ func mappingRuntimeMode(row routingRow) string {
 	return mode
 }
 
+func routingRuntimeListLabel(row routingRow) string {
+	switch mappingRuntimeMode(row) {
+	case "phi":
+		if model := strings.TrimSpace(row.LocalModel); model != "" {
+			return "Local AI (" + truncateMiddle(model, 14) + ")"
+		}
+		return "Local AI"
+	case "cloud":
+		return "Cloud AI"
+	case "vm":
+		return "VM AI"
+	default:
+		return "App default AI"
+	}
+}
+
+func routingRuntimeTitle(row routingRow) string {
+	return routingRuntimeChoiceTitle(mappingRuntimeMode(row))
+}
+
+func routingRuntimeChoiceTitle(mode string) string {
+	switch strings.TrimSpace(strings.ToLower(mode)) {
+	case "phi":
+		return "Local AI on this machine"
+	case "cloud":
+		return "Cloud AI"
+	case "vm":
+		return "VM-based AI"
+	default:
+		return "Follow the app-wide AI setting"
+	}
+}
+
+func routingRuntimeDetail(row routingRow) string {
+	switch mappingRuntimeMode(row) {
+	case "phi":
+		return "This room always uses the local PHI runtime on this machine."
+	case "cloud":
+		return "This room always uses cloud AI, even if other rooms use local mode."
+	case "vm":
+		return "This room uses the VM runtime instead of the host machine."
+	default:
+		return "This room follows the app-wide AI setting from the PHI tab or settings."
+	}
+}
+
+func routingRuntimeEngine(row routingRow) string {
+	if mappingRuntimeMode(row) != "phi" {
+		return ""
+	}
+	backend := strings.TrimSpace(row.LocalBackend)
+	model := strings.TrimSpace(row.LocalModel)
+	preset := strings.TrimSpace(row.LocalPreset)
+
+	if backend == "" && model == "" && preset == "" {
+		return "Uses the PHI tab defaults for backend, model, and preset."
+	}
+
+	var parts []string
+	if backend != "" {
+		parts = append(parts, backend)
+	}
+	if model != "" {
+		parts = append(parts, model)
+	}
+	if preset != "" {
+		parts = append(parts, "preset "+preset)
+	}
+	return strings.Join(parts, " \u2022 ")
+}
+
 func routingRowKey(channel, chatID string) string {
 	return strings.ToLower(strings.TrimSpace(channel)) + ":" + strings.TrimSpace(chatID)
 }
@@ -496,7 +567,7 @@ func (m *RoutingModel) rebuildDetailContent() {
 		maxValW = 20
 	}
 
-	detailLabel := lipgloss.NewStyle().Foreground(colorMuted).Width(16)
+	detailLabel := lipgloss.NewStyle().Foreground(colorMuted).Width(18)
 
 	var lines []string
 	lines = append(lines, fmt.Sprintf("  %s  %s", detailLabel.Render("Channel:"), styleValue.Render(r.Channel)))
@@ -516,22 +587,16 @@ func (m *RoutingModel) rebuildDetailContent() {
 		}
 		lines = append(lines, fmt.Sprintf("  %s  %s", detailLabel.Render("Allowed users:"), senders))
 	}
-	mode := mappingRuntimeMode(r)
-	lines = append(lines, fmt.Sprintf("  %s  %s", detailLabel.Render("AI mode:"), styleValue.Render(mode)))
-	if strings.TrimSpace(r.LocalBackend) != "" {
-		lines = append(lines, fmt.Sprintf("  %s  %s", detailLabel.Render("Local backend:"), styleValue.Render(r.LocalBackend)))
-	}
-	if strings.TrimSpace(r.LocalModel) != "" {
-		lines = append(lines, fmt.Sprintf("  %s  %s", detailLabel.Render("Local model:"), styleValue.Render(truncateValue(r.LocalModel, maxValW))))
-	}
-	if strings.TrimSpace(r.LocalPreset) != "" {
-		lines = append(lines, fmt.Sprintf("  %s  %s", detailLabel.Render("Local preset:"), styleValue.Render(truncateValue(r.LocalPreset, maxValW))))
+	lines = append(lines, fmt.Sprintf("  %s  %s", detailLabel.Render("Room AI:"), styleValue.Render(routingRuntimeTitle(r))))
+	lines = append(lines, fmt.Sprintf("  %s  %s", detailLabel.Render("What this means:"), styleHint.Render(routingRuntimeDetail(r))))
+	if engine := routingRuntimeEngine(r); strings.TrimSpace(engine) != "" {
+		lines = append(lines, fmt.Sprintf("  %s  %s", detailLabel.Render("Local setup:"), styleValue.Render(truncateValue(engine, maxValW))))
 	}
 	lines = append(lines, "")
 	lines = append(lines, "  "+styleBold.Render("Actions in this screen"))
 	lines = append(lines, "    "+styleKey.Render("[u]")+" Edit who can message the AI in this folder")
 	lines = append(lines, "    "+styleKey.Render("[f]")+" Change which folder this chat uses")
-	lines = append(lines, "    "+styleKey.Render("[m]")+" Choose cloud or local AI mode for this room")
+	lines = append(lines, "    "+styleKey.Render("[m]")+" Decide whether this room uses cloud, local, VM, or the app default")
 	lines = append(lines, "    "+styleKey.Render("[e]")+" Explain why a sender is allowed or blocked")
 	lines = append(lines, "    "+styleKey.Render("[x]")+" Detach this mapping")
 	explainSender := firstAllowedSender(r.AllowedSenders)
@@ -2303,29 +2368,29 @@ func (m RoutingModel) renderEditRuntimeOverlay() string {
 	}
 	row := m.mappings[m.selectedRow]
 	var lines []string
-	lines = append(lines, styleBold.Render(fmt.Sprintf("  Choose AI mode for %s:%s", row.Channel, row.ChatID)))
-	lines = append(lines, styleHint.Render("    This room can use cloud AI or your local PHI runtime."))
+	lines = append(lines, styleBold.Render(fmt.Sprintf("  Choose who answers in %s:%s", row.Channel, row.ChatID)))
+	lines = append(lines, styleHint.Render("    Pick whether this room follows the app default, uses cloud AI, uses local PHI mode, or uses the VM."))
 
 	switch m.editRuntimeStep {
 	case editRuntimeStepMode:
 		lines = append(lines, fmt.Sprintf("  Mode: %s", m.editRuntimeInput.View()))
-		lines = append(lines, styleHint.Render("    Options: default, cloud, phi, vm"))
+		lines = append(lines, styleHint.Render("    Options: default = follow app setting, cloud = always online, phi = always local, vm = always in the VM"))
 	case editRuntimeStepBackend:
 		lines = append(lines, fmt.Sprintf("  Local backend: %s", m.editRuntimeInput.View()))
-		lines = append(lines, styleHint.Render("    Usually ollama"))
+		lines = append(lines, styleHint.Render("    Usually ollama. Leave this blank to keep using the PHI tab default backend."))
 	case editRuntimeStepModel:
 		lines = append(lines, fmt.Sprintf("  Local model: %s", m.editRuntimeInput.View()))
-		lines = append(lines, styleHint.Render("    Example: qwen3.5:4b"))
+		lines = append(lines, styleHint.Render("    Example: qwen3.5:4b. Leave blank to keep using the PHI tab default model."))
 	case editRuntimeStepPreset:
 		lines = append(lines, fmt.Sprintf("  Local preset: %s", m.editRuntimeInput.View()))
-		lines = append(lines, styleHint.Render("    Optional profile label"))
+		lines = append(lines, styleHint.Render("    Optional. Leave blank to keep using the PHI tab default preset."))
 	case editRuntimeStepConfirm:
 		lines = append(lines, "")
 		mode := strings.TrimSpace(m.editRuntimeMode)
 		if mode == "" {
 			mode = "default"
 		}
-		lines = append(lines, fmt.Sprintf("    Mode: %s", styleValue.Render(mode)))
+		lines = append(lines, fmt.Sprintf("    Room AI choice: %s", styleValue.Render(routingRuntimeChoiceTitle(mode))))
 		if strings.TrimSpace(m.editRuntimeBackend) != "" {
 			lines = append(lines, fmt.Sprintf("    Local backend: %s", styleValue.Render(m.editRuntimeBackend)))
 		}
@@ -2334,6 +2399,9 @@ func (m RoutingModel) renderEditRuntimeOverlay() string {
 		}
 		if strings.TrimSpace(m.editRuntimePreset) != "" {
 			lines = append(lines, fmt.Sprintf("    Local preset: %s", styleValue.Render(m.editRuntimePreset)))
+		}
+		if strings.TrimSpace(m.editRuntimeBackend) == "" && strings.TrimSpace(m.editRuntimeModel) == "" && strings.TrimSpace(m.editRuntimePreset) == "" && strings.EqualFold(strings.TrimSpace(m.editRuntimeMode), "phi") {
+			lines = append(lines, styleHint.Render("    This room will use the PHI tab defaults for local backend, model, and preset."))
 		}
 		lines = append(lines, "")
 		lines = append(lines, styleHint.Render("    Press Enter to save, Esc to cancel"))
