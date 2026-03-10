@@ -86,6 +86,7 @@ var baselineScienceSkillNames = []string{
 	"docx-review",
 	"pptx",
 	"pdf",
+	"acroform-fill",
 	"xlsx",
 }
 

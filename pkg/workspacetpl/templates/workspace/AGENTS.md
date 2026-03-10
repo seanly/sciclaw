@@ -35,4 +35,5 @@ Treat them as a starting pack, not a fixed identity. Keep, remove, or extend as 
 - `docx-review`: tracked-review editing/diff workflows for existing Word documents
 - `pptx`: slide deck creation/editing workflows (Anthropic official office skill)
 - `pdf`: PDF extraction/transformation workflows (Anthropic official office skill)
+- `acroform-fill`: inspect/schema/fill workflow for true fillable AcroForm PDFs
 - `xlsx`: spreadsheet creation/editing workflows (Anthropic official office skill)
