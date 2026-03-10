@@ -8,6 +8,16 @@ metadata: {"nanobot":{"emoji":"📝","requires":{"bins":["docx-review"]},"instal
 
 CLI tool for Word document review: tracked changes, comments, read, diff, and git integration. Built on Microsoft's Open XML SDK — 100% compatible tracked changes and comments.
 
+## sciClaw-first rule
+
+When operating inside sciClaw, prefer the typed tools for the common flows:
+
+- `docx_review_read` for `--read --json`
+- `docx_review_diff` for `--diff --json`
+- `docx_review_apply` for manifest validation/apply flows
+
+Use raw `docx-review` CLI only as fallback or for advanced modes the typed tools do not cover yet, such as `--textconv`, `--git-setup`, `--create`, `--template`, or unusual flag combinations.
+
 ## Install
 
 ```bash
@@ -38,6 +48,12 @@ Use `docx-review` when tracked changes/comments are explicitly desired:
 ```bash
 docx-review input.docx edits.json -o reviewed.docx --json
 ```
+
+Inside sciClaw, the preferred mapping is:
+
+- `docx_review_read` before planning edits
+- `docx_review_apply` for `--dry-run --json` and the final apply step
+- `docx_review_diff` for verification/comparison
 
 ### Anti-pattern to avoid
 
@@ -147,6 +163,8 @@ Standard pattern for using docx-review with AI-generated edits:
 docx-review manuscript.docx --read --json > doc_content.json
 ```
 
+Preferred inside sciClaw: `docx_review_read`
+
 Or use pandoc for markdown extraction:
 
 ```bash
@@ -176,6 +194,8 @@ Include 15+ words of surrounding context for uniqueness. First match wins.
 docx-review manuscript.docx manifest.json --dry-run --json
 ```
 
+Preferred inside sciClaw: `docx_review_apply` in validation/dry-run mode
+
 Check for failures. If any edits fail (`"success": false`), fix the manifest (usually the `find`/`anchor` text doesn't match exactly) and retry.
 
 ### Step 4: Apply
@@ -184,12 +204,16 @@ Check for failures. If any edits fail (`"success": false`), fix the manifest (us
 docx-review manuscript.docx manifest.json -o manuscript_reviewed.docx --json
 ```
 
+Preferred inside sciClaw: `docx_review_apply`
+
 ### Step 5: Verify (optional)
 
 ```bash
 docx-review manuscript_reviewed.docx --read --json | jq '.summary'
 docx-review --diff manuscript.docx manuscript_reviewed.docx
 ```
+
+Preferred inside sciClaw: `docx_review_read` and `docx_review_diff`
 
 ## Workflow: Peer Review Response
 
