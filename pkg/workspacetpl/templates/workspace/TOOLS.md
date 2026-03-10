@@ -37,6 +37,8 @@ Use tools as part of reproducible workflows, not ad-hoc actions.
 - For `pandoc` DOCX generation, sciClaw auto-applies its bundled NIH reference template unless you explicitly pass `--reference-doc`.
 - Use `docx-review` only for tracked-change edits/comments/diff on existing documents.
 - Do not use `docx-review` manifest workflows to create first-draft manuscripts unless the user explicitly requests tracked changes.
+- For fillable AcroForm PDFs, prefer `pdf_form_inspect`, `pdf_form_schema`, and `pdf_form_fill` over shelling out to `pdf-form-filler` directly.
+- Do not wrap `pdf-form-filler` in Python subprocess calls when dedicated sciClaw PDF form tools are available.
 
 ### PubMed Examples (Preferred)
 

@@ -466,6 +466,15 @@ func TestShellTool_BlocksPythonSubprocessWrapperForPubMed(t *testing.T) {
 	}
 }
 
+func TestShellTool_BlocksPythonSubprocessWrapperForPDFFormFiller(t *testing.T) {
+	tool := NewExecTool("", false)
+	cmd := "python3 - <<'PY'\nimport subprocess\nsubprocess.run(['pdf-form-filler','schema','--pdf','form.pdf'], check=True)\nPY"
+	blocked := tool.guardCommand(cmd, "")
+	if !strings.Contains(blocked, "avoid Python subprocess wrappers") {
+		t.Fatalf("expected wrapper block message, got: %q", blocked)
+	}
+}
+
 func TestShellTool_AllowsDirectPubMedCLI(t *testing.T) {
 	tool := NewExecTool("", false)
 	cmd := `pubmed search "schizophrenia" --json --limit 5`

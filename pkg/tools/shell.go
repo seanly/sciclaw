@@ -647,7 +647,7 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 	}
 
 	if isPythonSubprocessWrapperForInstalledCLI(cmd) {
-		return "Command blocked by safety guard (avoid Python subprocess wrappers for pubmed/docx-review; call the CLI directly)"
+		return "Command blocked by safety guard (avoid Python subprocess wrappers for pubmed/docx-review/pdf-form-filler; call the CLI or dedicated tool directly)"
 	}
 
 	if t.restrictToWorkspace {
@@ -778,7 +778,7 @@ func isPythonSubprocessWrapperForInstalledCLI(command string) bool {
 	if !(strings.Contains(lower, "check_output") || strings.Contains(lower, "subprocess.run") || strings.Contains(lower, "popen(")) {
 		return false
 	}
-	if strings.Contains(lower, "pubmed") || strings.Contains(lower, "docx-review") {
+	if strings.Contains(lower, "pubmed") || strings.Contains(lower, "docx-review") || strings.Contains(lower, "pdf-form-filler") {
 		return true
 	}
 	return false

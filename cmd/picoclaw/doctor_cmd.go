@@ -87,7 +87,7 @@ func doctorCmd() {
 func doctorHelp() {
 	commandName := invokedCLIName()
 	fmt.Println("\nDoctor:")
-	fmt.Printf("  %s doctor checks your sciClaw deployment, workspace, service health, and key external tools (docx-review, quarto, ImageMagick, irl, pandoc, PubMed CLI).\n", commandName)
+	fmt.Printf("  %s doctor checks your sciClaw deployment, workspace, service health, and key external tools (docx-review, quarto, ImageMagick, irl, pandoc, PubMed CLI, optional pdf-form-filler).\n", commandName)
 	fmt.Println()
 	fmt.Println("Options:")
 	fmt.Println("  --json        Machine-readable output")
@@ -293,6 +293,7 @@ func runDoctor(opts doctorOptions) doctorReport {
 	add(checkBinaryWithHint("irl", []string{"--version"}, 3*time.Second, "brew install irl"))
 	add(checkBinaryWithHint("pandoc", []string{"-v"}, 3*time.Second, "brew install pandoc"))
 	add(checkBinaryWithHint("magick", []string{"-version"}, 3*time.Second, "brew install imagemagick"))
+	add(checkOptionalBinaryWithHint("pdf-form-filler", []string{"--help"}, 3*time.Second, "brew install pdf-form-filler"))
 	add(checkPandocNIHTemplate())
 	add(checkBinaryWithHint("rg", []string{"--version"}, 3*time.Second, "brew install ripgrep"))
 	if runtime.GOOS == "linux" {
@@ -385,6 +386,19 @@ func checkBinaryWithHint(name string, args []string, timeout time.Duration, inst
 		// Only mention brew if it is present; otherwise keep the message generic.
 		if findBrew() != "" || strings.HasPrefix(installHint, "install ") {
 			c.Data["install_hint"] = installHint
+		}
+	}
+	return c
+}
+
+func checkOptionalBinaryWithHint(name string, args []string, timeout time.Duration, installHint string) doctorCheck {
+	c := checkBinaryWithHint(name, args, timeout, installHint)
+	if c.Status == doctorErr {
+		c.Status = doctorWarn
+		if strings.TrimSpace(c.Message) == "" {
+			c.Message = "optional tool not found"
+		} else {
+			c.Message = c.Message + " (optional)"
 		}
 	}
 	return c

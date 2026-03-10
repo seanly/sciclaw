@@ -644,6 +644,7 @@ func onboard() {
 		fmt.Println("  If you installed via Homebrew, ImageMagick, IRL, ripgrep, docx-review, and pubmed-cli are installed automatically.")
 		fmt.Println("  Install Quarto with: brew install --cask quarto")
 	}
+	fmt.Println("  Optional: brew install pdf-form-filler  # inspect/schema/fill AcroForm PDFs")
 	if strings.TrimSpace(cfg.Tools.PubMed.APIKey) == "" {
 		fmt.Println("  Optional: export NCBI_API_KEY=\"your-key\"  # PubMed rate limit: 3/s -> 10/s")
 	}
