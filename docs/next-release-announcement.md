@@ -1,8 +1,4 @@
-# sciClaw Next Release Announcement Draft
-
-Use this file when the next release tag is cut. Replace:
-- `vNEXT` with the actual version
-- `RELEASE_URL` with the real GitHub release link
+# sciClaw v0.2.2 Announcement Copy
 
 Keep the tone aligned with prior announcement files:
 - short opening line
@@ -17,7 +13,7 @@ Do not show real PHI, API keys, email addresses, bot tokens, or private channel 
 
 ## Tweet 1 - Main Release Announcement
 
-sciClaw vNEXT is out.
+sciClaw v0.2.2 is out.
 
 This release makes private, local AI much easier to use without guesswork.
 
@@ -27,7 +23,7 @@ This release makes private, local AI much easier to use without guesswork.
 
 If you want the privacy of local AI without spending your day troubleshooting it, this release is for you.
 
-RELEASE_URL
+https://github.com/drpedapati/sciclaw/releases/tag/v0.2.2
 
 ---
 
@@ -77,7 +73,9 @@ If you already use sciClaw, update and open the app.
 
 If you are new, install from Homebrew and do the rest from the sciClaw app in your terminal.
 
-Docs and install guide: https://sciclaw.dev/docs.html
+Release notes: https://github.com/drpedapati/sciclaw/releases/tag/v0.2.2
+
+Install guide: https://sciclaw.dev/docs.html
 
 ---
 
@@ -169,11 +167,11 @@ Why:
 - No real Discord/Telegram private channel names
 - No API keys or email addresses
 - Prefer short workspace paths
-- Keep the visible version number in frame if possible
+- Keep `v0.2.2` visible in frame if possible
 
 ### Caption patterns that match prior style
 
-- “sciClaw vNEXT is out.”
+- “sciClaw v0.2.2 is out.”
 - “This release makes private, local AI much easier to use.”
 - “You should not have to guess whether local mode is actually working.”
 - “You should be able to keep one room private without moving everything local.”
