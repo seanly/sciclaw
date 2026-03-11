@@ -19,10 +19,13 @@ Do not show real PHI, API keys, email addresses, bot tokens, or private channel 
 
 sciClaw vNEXT is out.
 
-This release makes local mode more usable and more honest:
-- built-in PHI eval now checks real local behavior instead of just “is Ollama installed”
-- the app shows whether a machine is good for interactive local work or just a slower fallback
-- PDF form workflows now have a typed tool path instead of ad hoc shell usage
+This release makes private, local AI much easier to use without guesswork.
+
+- the app now tells you whether your machine is actually a good fit for local mode
+- routing sensitive rooms is clearer
+- document workflows are safer and more guided
+
+If you want the privacy of local AI without spending your day troubleshooting it, this release is for you.
 
 RELEASE_URL
 
@@ -30,64 +33,51 @@ RELEASE_URL
 
 ## Tweet 2 - Local PHI Mode
 
-You do not have to choose between “all cloud” and “all local.”
+You should not have to choose between “everything in the cloud” and “everything on one laptop.”
 
-sciClaw can now make that distinction much clearer:
-- route sensitive rooms to local PHI mode
-- keep other rooms on normal cloud defaults
-- see local suitability directly in the app before trusting a machine for private work
+sciClaw now makes that split much clearer:
+- keep a sensitive room local
+- leave everything else on normal cloud defaults
+- check in the app whether a machine is really ready for private local work
 
-That is a much better operational model than pretending every laptop gives the same local AI experience.
+That is a better model than pretending every machine gives the same local AI experience.
 
 ---
 
 ## Tweet 3 - Honest Local Diagnostics
 
-One of the hardest problems with local models is not setup. It is knowing whether they are actually usable.
+One of the hardest parts of local AI is not installation. It is figuring out whether it is actually usable on your machine.
 
-sciClaw now keeps local eval results around and shows:
-- last eval time
-- backend/model used
-- probe status
-- fallback behavior
-- whether the machine is “good interactive” or just “fallback only”
+sciClaw now tells you that more directly:
+- whether local mode feels responsive or is just a slower backup
+- when the last check ran
+- what model is being used
+- what failed if something is wrong
 
-Especially important for CPU-only boxes.
+That matters a lot on CPU-only machines, where “supported” does not always mean “pleasant to use.”
 
 ---
 
-## Tweet 4 - PDF Form Workflow
+## Tweet 4 - Safer Document Workflows
 
-PDF form filling is now a first-class workflow instead of “hope the agent writes the right shell command.”
+Working with documents should feel like using a product, not hoping the AI writes the right command.
 
-The new path is:
-- inspect the PDF form
-- export the field schema
-- fill with a typed tool path
-- use the new `acroform-fill` skill as the workflow guide
+sciClaw is moving more document tasks into built-in guided workflows, including PDF forms and Word review.
 
-This is safer and much easier to reason about than free-form shell.
+That means:
+- fewer brittle command mistakes
+- clearer results
+- less operator babysitting
 
 ---
 
 ## Tweet 5 - Upgrade / Try It
 
-For existing installs:
+If you already use sciClaw, update and open the app.
 
-```bash
-brew update && brew upgrade sciclaw
-sciclaw doctor
-sciclaw app
-```
+If you are new, install from Homebrew and do the rest from the sciClaw app in your terminal.
 
-For new installs:
-
-```bash
-brew tap drpedapati/tap && brew install sciclaw
-sciclaw app
-```
-
-Docs: https://sciclaw.dev/docs.html
+Docs and install guide: https://sciclaw.dev/docs.html
 
 ---
 
@@ -95,19 +85,19 @@ Docs: https://sciclaw.dev/docs.html
 
 Hook:
 
-You should be able to keep one room local without turning your whole setup into local mode.
+You should be able to keep one room private without moving your entire setup to local mode.
 
 Body:
 
-That is the model we are pushing in sciClaw:
-- one sensitive room can run on a local model
-- everything else can stay on cloud defaults
-- the Routing tab now makes that state much clearer
+That is the direction we are pushing in sciClaw:
+- one sensitive room can stay local
+- everything else can stay on normal defaults
+- the app makes that easier to see and manage
 
 Screenshot:
 - Routing tab
 - one mapped room highlighted
-- detail pane visible
+- detail pane visible with the runtime shown clearly
 - synthetic channel name only
 
 ---
@@ -116,17 +106,15 @@ Screenshot:
 
 Hook:
 
-CPU-only local AI is useful. It is just not the same thing as GPU local AI.
+Not every computer is a great local AI machine, and products should say that out loud.
 
 Body:
 
-The worst UX is pretending they are equivalent.
+sciClaw now does a better job of telling people the truth:
+- some machines are good for everyday local work
+- some are better as backup or occasional private use
 
-sciClaw now says that directly in the app:
-- interactive local on a strong GPU box
-- fallback-only local on a slower CPU-only box
-
-That is a better product than vague “local supported” claims.
+That is a much better experience than vague “local supported” claims.
 
 Screenshot:
 - PHI tab on a CPU-only machine
@@ -134,28 +122,22 @@ Screenshot:
 
 ---
 
-## Isolated Engagement Tweet 3 - Native PDF Tooling
+## Isolated Engagement Tweet 3 - Better Document UX
 
 Hook:
 
-If an agent has to invent raw shell for every document workflow, it will eventually do something stupid.
+People should not need to know command-line tricks just to review a Word file or fill a form safely.
 
 Body:
 
-We started fixing that in sciClaw by giving PDF forms a typed adapter layer:
-- inspect
-- schema
-- fill
-
-Then we layered a focused skill on top.
-
-That is the right split:
-- code owns execution safety
-- skill owns workflow guidance
+We are slowly moving document work in that direction inside sciClaw:
+- safer built-in workflows
+- fewer fragile AI-generated commands
+- more guidance inside the product itself
 
 Screenshot:
-- terminal with a clean `pdf_form_*` tool result
-- optional side-by-side output PDF filename in workspace
+- a clean app or terminal view with a successful document workflow
+- optional before/after file names visible in a safe synthetic workspace
 
 ---
 
@@ -168,17 +150,17 @@ Use a side-by-side composite:
 - right: Routing tab showing one room set to local
 
 Why:
-- communicates the local story in one image
-- shows both machine-level readiness and room-level control
+- communicates the main story in one image
+- shows both machine readiness and room-level control
 
 ### Best second screenshot
 
 Use a terminal + artifact pairing:
-- terminal pane with PDF form inspect/schema/fill results
-- finder/file list showing output files
+- one clean workflow result
+- a visible output file or reviewed document next to it
 
 Why:
-- demonstrates the new typed workflow without needing real document contents
+- shows a real outcome without requiring technical detail
 
 ### Screenshot rules
 
@@ -192,9 +174,10 @@ Why:
 ### Caption patterns that match prior style
 
 - “sciClaw vNEXT is out.”
-- “This release makes local mode more usable and more honest.”
-- “You do not have to choose between all cloud and all local.”
-- “This is safer than free-form shell.”
+- “This release makes private, local AI much easier to use.”
+- “You should not have to guess whether local mode is actually working.”
+- “You should be able to keep one room private without moving everything local.”
+- “Document workflows should feel guided, not fragile.”
 
 ### Phrases to avoid
 
