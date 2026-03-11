@@ -113,7 +113,7 @@ func (d *Dispatcher) sendBlockNotice(ctx context.Context, msg bus.InboundMessage
 		content = "This chat mapping is invalid right now (workspace unavailable). Ask an operator to run `sciclaw routing validate`."
 	default:
 		content = fmt.Sprintf(
-			"This chat is not mapped to a workspace yet.\n\nOperator setup hint:\n  sciclaw routing add --channel %s --chat-id %s --workspace /absolute/path --allow <sender_id>",
+			"This chat is not mapped to a workspace yet.\n\nEasy setup:\n  Open `sciclaw app` in your terminal, go to Routing, and add this room there.\n\nOperator CLI:\n  sciclaw routing add --channel %s --chat-id %s --workspace /absolute/path --allow <sender_id>\n\nWant unmapped rooms to use the default workspace instead of blocking?\n  In `sciclaw app`, change Routing or Settings -> Unmapped behavior to `default`.",
 			msg.Channel,
 			msg.ChatID,
 		)
